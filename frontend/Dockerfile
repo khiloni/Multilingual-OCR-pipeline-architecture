@@ -1,7 +1,7 @@
 # Purpose: Build stage for serving DocScribe React + Vite + TypeScript frontend.
 # Future TODOs: Use multi-stage builds with Nginx or Caddy to serve production bundle assets.
 
-FROM node:18-alpine
+FROM node:20-alpine
 
 WORKDIR /app
 

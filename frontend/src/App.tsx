@@ -7,8 +7,8 @@ import { UploadForm } from './components/UploadForm';
 import { JobStatus } from './components/JobStatus';
 import { PagePreview } from './components/PagePreview';
 import { ResultViewer } from './components/ResultViewer';
-import { api, CommonOutputSchema } from './api/client';
-import { Cpu, RotateCcw, AlertTriangle, Layers, FileText } from 'lucide-react';
+import { api } from './api/client';
+import { Cpu, RotateCcw, AlertTriangle, Layers, Loader2} from 'lucide-react';
 
 const OCRDashboard: React.FC = () => {
   const { state, setCurrentJob, updateJobStatus, updateOcrResult, setProcessing, resetState } = useAppStore();
