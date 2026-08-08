@@ -2,7 +2,7 @@
 # Future TODOs: Add rate limits, file validation (mime-type and size checks), and webhook trigger dispatches.
 
 import uuid
-from typing import Literal
+from typing import Literal, Optional
 from fastapi import APIRouter, UploadFile, File, Depends, Query, HTTPException
 from fastapi.responses import JSONResponse, FileResponse
 from sqlalchemy.orm import Session
