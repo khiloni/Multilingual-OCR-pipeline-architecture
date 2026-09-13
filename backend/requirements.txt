@@ -35,3 +35,15 @@ paddleocr>=3.0.0
 
 # Lightweight language identification (pure-Python, no model file download)
 langdetect>=1.0.9
+
+# Surya OCR fallback engine — pinned to 0.17.1, the last release before the
+# 0.20.0 architecture overhaul that replaced FoundationPredictor/
+# RecognitionPredictor/DetectionPredictor with a SuryaInferenceManager backed
+# by a mandatory vllm (NVIDIA GPU) or llama.cpp inference server. 0.17.1 still
+# runs on plain PyTorch (CPU or GPU via TORCH_DEVICE), which fits this
+# CPU-first Docker Compose setup without adding a second inference server.
+# See worker/pipeline/engines/surya_engine.py for the porting notes.
+surya-ocr==0.17.1
+
+# Automated post-OCR spell correction (SymSpell, per-language dictionaries)
+symspellpy>=6.7.7

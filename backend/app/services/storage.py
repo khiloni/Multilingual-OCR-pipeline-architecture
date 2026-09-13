@@ -1,6 +1,7 @@
 # Purpose: S3/MinIO service abstraction for uploading/downloading documents and structured extraction JSONs.
 # Uses boto3 against the MinIO S3-compatible API (local) or real S3 (prod).
 
+import json
 import logging
 from io import BytesIO
 from typing import BinaryIO, Union
@@ -48,6 +49,31 @@ class StorageService:
         except ClientError:
             self.client.create_bucket(Bucket=self.bucket)
             logger.info("Created object storage bucket: %s", self.bucket)
+        self._ensure_results_public_read()
+
+    def _ensure_results_public_read(self) -> None:
+        """
+        Grants anonymous GetObject on the results/* prefix only (page preview
+        PNGs, result JSON/Markdown) — never on documents/* (raw uploaded PDFs
+        stay private). The frontend renders page preview images directly from
+        MinIO by URL, which requires this; best-effort since not every
+        S3-compatible backend supports put_bucket_policy the same way.
+        """
+        policy = {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Principal": "*",
+                    "Action": ["s3:GetObject"],
+                    "Resource": [f"arn:aws:s3:::{self.bucket}/results/*"],
+                }
+            ],
+        }
+        try:
+            self.client.put_bucket_policy(Bucket=self.bucket, Policy=json.dumps(policy))
+        except ClientError as e:
+            logger.warning("Could not set public-read policy on results/*: %s", e)
 
     def check_storage_health(self) -> bool:
         """
@@ -136,6 +162,25 @@ class StorageService:
         except ClientError as e:
             logger.error("Failed to delete %s: %s", storage_path, e)
             return False
+
+    def delete_prefix(self, prefix: str) -> int:
+        """
+        Deletes every object under a key prefix (e.g. "results/{job_id}/").
+        Returns the number of objects deleted. Best-effort — used for cleanup
+        when a document/job is removed, never on the critical path.
+        """
+        deleted = 0
+        try:
+            paginator = self.client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
+                keys = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
+                if not keys:
+                    continue
+                self.client.delete_objects(Bucket=self.bucket, Delete={"Objects": keys})
+                deleted += len(keys)
+        except ClientError as e:
+            logger.error("Failed to delete prefix %s: %s", prefix, e)
+        return deleted
 
 
 # Initialize a default global instance of the storage service

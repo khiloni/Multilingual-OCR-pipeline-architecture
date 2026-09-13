@@ -65,3 +65,11 @@ build/
 
 .DS_Store
 Thumbs.db
+
+# =========================
+# ML model artifacts
+# =========================
+# Training checkpoints (.pdparams/.pdopt) run 130-250MB each, well over
+# GitHub's 100MB hard limit — never commit these directly. Use Git LFS,
+# cloud storage, or a release asset instead once there's an export pipeline.
+model/

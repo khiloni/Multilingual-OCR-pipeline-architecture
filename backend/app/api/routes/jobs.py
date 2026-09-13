@@ -1,5 +1,6 @@
 # Purpose: API route endpoints for creating, checking status, retrieving outputs, and reprocessing jobs.
 
+import json
 import logging
 import uuid
 from io import BytesIO
@@ -7,12 +8,13 @@ from pathlib import PurePosixPath
 from typing import Literal, Optional, Tuple
 
 import pymupdf
+from botocore.exceptions import ClientError
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.models.models import Document, Job
+from app.models.models import Block, Document, Job, Page
 from app.schemas.schemas import JobCreateResponse, JobStatusResponse
 from app.services.queue import queue_service
 from app.services.storage import storage_service
@@ -157,40 +159,28 @@ def get_job_result(
     """
     Retrieves finalized multilingual OCR output in either parsed Common JSON schema or Markdown layout.
     """
-    # TODO: Fetch job from DB and verify status == "done"
-    # If done, load extraction results from storage_service or db blocks and format.
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found.")
+    if job.status != "done":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job {job_id} is '{job.status}', not finished yet.",
+        )
+
+    ext = "md" if format == "markdown" else "json"
+    storage_path = f"results/{job_id}/result.{ext}"
+    try:
+        raw = storage_service.download_document(storage_path)
+    except ClientError as exc:
+        logger.error("Result artifact missing for job_id=%s at %s", job_id, storage_path)
+        raise HTTPException(
+            status_code=404, detail="Result artifact not found in object storage."
+        ) from exc
+
     if format == "markdown":
-        return JSONResponse(content={"markdown": "# Decoded PDF Heading\n\nThis is placeholder text."})
-
-    import datetime
-
-    return {
-        "document_id": uuid.uuid4(),
-        "filename": "placeholder.pdf",
-        "page_count": 1,
-        "pages": [
-            {
-                "page_number": 1,
-                "language_detected": ["en"],
-                "blocks": [
-                    {
-                        "block_id": "p1_b1",
-                        "type": "paragraph",
-                        "text": "This is a placeholder of extracted OCR text content.",
-                        "bbox": [10.0, 20.0, 100.0, 50.0],
-                        "confidence": 0.95,
-                        "language": "en",
-                        "engine_used": "paddleocr",
-                    }
-                ],
-            }
-        ],
-        "metadata": {
-            "processed_at": datetime.datetime.utcnow().isoformat(),
-            "avg_confidence": 0.95,
-            "low_confidence_pages": [],
-        },
-    }
+        return JSONResponse(content={"markdown": raw.decode("utf-8")})
+    return JSONResponse(content=json.loads(raw))
 
 
 @router.get("/{job_id}/pages/{page_number}")
@@ -202,11 +192,55 @@ def get_page_result(
     """
     Retrieves layout details and preview image representing OCR bounding boxes for a single page.
     """
+    job = db.query(Job).filter(Job.id == job_id).first()
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found.")
+    if job.status != "done":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Job {job_id} is '{job.status}', not finished yet.",
+        )
+
+    page = (
+        db.query(Page)
+        .filter(Page.job_id == job_id, Page.page_number == page_number)
+        .first()
+    )
+    if page is None:
+        raise HTTPException(
+            status_code=404, detail=f"Page {page_number} not found for job {job_id}."
+        )
+
+    block_rows = db.query(Block).filter(Block.page_id == page.id).all()
+    # DB round-trip doesn't guarantee row order matches the original reading
+    # order (no explicit sequence column on Block) — re-sort top-to-bottom,
+    # left-to-right the same way normalize.sort_reading_order() does.
+    block_rows.sort(key=lambda b: (b.bbox[1], b.bbox[0]))
+
+    blocks = [
+        {
+            "block_id": f"p{page_number}_b{idx + 1}",
+            "type": b.type,
+            "text": b.content or "",
+            "bbox": b.bbox,
+            "confidence": b.confidence,
+            "language": b.language,
+            "engine_used": b.engine_used,
+        }
+        for idx, b in enumerate(block_rows)
+    ]
+
+    storage_path = f"results/{job_id}/page_{page_number}.png"
+    try:
+        image_preview_url = storage_service.generate_presigned_url(storage_path)
+    except ClientError:
+        image_preview_url = None
+
     return {
         "job_id": job_id,
         "page_number": page_number,
-        "image_preview_url": f"http://localhost:9000/docscribe-storage/results/{job_id}/page_{page_number}.png",
-        "blocks": [],
+        "image_preview_url": image_preview_url,
+        "blocks": blocks,
     }
 
 
@@ -219,12 +253,46 @@ def reprocess_job(
     db: Session = Depends(get_db),
 ):
     """
-    Re-runs OCR extraction using alternate settings or forcing a specific engine path.
+    Re-runs OCR extraction for the same document under a new job.
+
+    force_engine is accepted but not yet honored — EngineRouter always runs
+    its own confidence/table/mixed-script logic (ARCHITECTURE.md §9). Wiring
+    a forced-engine override through the router and Celery task is a bigger
+    change than this stub fix; log it so callers relying on it aren't
+    silently misled.
     """
+    old_job = db.query(Job).filter(Job.id == job_id).first()
+    if old_job is None:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found.")
+
+    if force_engine is not None:
+        logger.warning(
+            "reprocess_job: force_engine=%s requested but not yet honored by "
+            "EngineRouter/Celery task — running normal routing logic.",
+            force_engine,
+        )
+
     new_job_id = uuid.uuid4()
+    db_job = Job(id=new_job_id, document_id=old_job.document_id, status="queued")
+    db.add(db_job)
+    try:
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Failed to create reprocess job row for document_id=%s", old_job.document_id)
+        raise HTTPException(status_code=500, detail="Failed to create reprocess job.") from exc
+
+    try:
+        queue_service.enqueue_ocr_job(new_job_id, old_job.document_id)
+    except Exception as exc:
+        logger.exception("Failed to enqueue reprocess task for job_id=%s", new_job_id)
+        db_job.status = "failed"
+        db.commit()
+        raise HTTPException(status_code=502, detail="Job created but failed to enqueue.") from exc
+
     return JobCreateResponse(
         job_id=new_job_id,
-        document_id=uuid.uuid4(),
+        document_id=old_job.document_id,
         status="queued",
         message="Reprocessing task enqueued successfully under new job.",
     )

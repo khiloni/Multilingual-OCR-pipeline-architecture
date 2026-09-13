@@ -2,7 +2,7 @@
 
 **Project codename:** DocScribe (placeholder — rename as needed)
 **Status:** Planning / Base Reference Document
-**Last updated:** 2026-08-07
+**Last updated:** 2026-09-13
 
 > This file is the single source of truth for the application's design. Every module, decision, and diagram lives here first before code is written. Update this file whenever architecture decisions change.
 
@@ -51,7 +51,7 @@ Basis for choosing PaddleOCR as primary and Surya as fallback in the routing log
 |---|---|---|---|---|---|---|---|---|---|
 | **Tesseract** | Traditional CV + LSTM | Apache 2.0 | Lightweight, no GPU needed | ~25 pages/min (CPU) | 100+ languages, weaker on script mixing | Poor — no reliable table/form structure | Low — simple install, minimal deps | CPU only | Cheap baseline / offline fallback, not primary engine |
 | **PaddleOCR (PP-OCRv6 + PP-Structure)** | Traditional CV pipeline | Apache 2.0 | Small-to-mid models | ~120 pages/min (GPU, RTX 3090-class); slower on CPU | 80+ languages incl. strong CJK | Good — PP-Structure gives real table extraction | Medium — PaddlePaddle dependency setup is more involved than Tesseract | CPU-viable, GPU recommended for throughput | **Primary engine** — best balance of speed, accuracy, and structure for the bulk of pages |
-| **Surya OCR** | VLM-based, layout-native | GPL-3.0 | ~650M params | Slower than Paddle, faster than larger VLMs | Strong, layout-aware across scripts | Strong — layout detection + OCR in one pass | Medium-High — needs PyTorch + model weights, GPU strongly preferred | GPU recommended | **Fallback engine** — routed to for low-confidence, complex-layout, or mixed-script pages |
+| **Surya OCR** | VLM-based, layout-native | GPL-3.0 | ~650M params | Slower than Paddle, faster than larger VLMs | Strong, layout-aware across scripts | Strong — layout detection + OCR in one pass | Medium-High — needs PyTorch + model weights, GPU strongly preferred | GPU recommended | **Fallback engine** — routed to for low-confidence, complex-layout, or mixed-script pages. Pinned to `surya-ocr==0.17.1`: releases ≥0.20.0 replaced the plain-PyTorch API with a `SuryaInferenceManager` that mandates a separate vllm (NVIDIA GPU) or llama.cpp inference server — too heavy for this CPU-first Docker Compose setup, so we stay on the last pre-overhaul release. |
 | **Dots.OCR / DeepSeek-OCR (VLM class)** | Large VLM, layout-native | Open weights (model-specific) | Multi-billion params | Slow, GPU-bound | Very strong, especially mixed/rare scripts | Excellent — native Markdown/JSON structured output | High — `trust_remote_code`, larger GPU memory footprint | GPU required | Reserved for Phase 2+ hardest cases (rare scripts, badly degraded scans) — optional, not in MVP |
 
 **Why this shapes the routing logic (Section 9):** Tesseract is excluded from the live pipeline (kept only as an emergency CPU-only fallback if PaddleOCR isn't available); PaddleOCR handles the majority of pages cheaply; Surya is invoked selectively rather than by default, since it costs more compute per page. The heavier VLMs (Dots.OCR/DeepSeek-OCR) are deferred until there's a clear case volume that justifies their GPU cost.
@@ -184,12 +184,15 @@ flowchart TD
     Detect --> Run[Run PaddleOCR]
     Run --> Score{Confidence >= threshold\nAND no table\nAND single script?}
     Score -->|Yes| Accept[Accept PaddleOCR output]
-    Score -->|No| Fallback[Run Surya / VLM fallback]
-    Fallback --> Merge[Merge best-of-both\nby block confidence]
+    Score -->|No| Fallback[Run Surya: detection + recognition\nlayout-aware, not just a recognition swap]
+    Fallback --> Merge[Merge best-of-both by block IOU:\nSurya's OWN bboxes are kept for its regions,\nPaddle only wins individual overlapping blocks\nwith higher confidence]
     Accept --> Normalize[Normalize to common schema]
     Merge --> Normalize
-    Normalize --> Output([Structured Block:\ntext, bbox, lang, confidence, type])
+    Normalize --> Spell[Automated spell correction:\nlow-confidence tokens only, en/hi/gu/mr]
+    Spell --> Output([Structured Block:\ntext, bbox, lang, confidence, type,\nspell_corrections audit log])
 ```
+
+Surya is a **structure-aware fallback**, not a drop-in recognition swap: its own `DetectionPredictor` produces the bboxes for the regions it covers, and `EngineRouter._merge_blocks()` (`backend/worker/pipeline/router.py`) keeps those boxes rather than pasting Surya's text into PaddleOCR's (possibly wrong) geometry. That distinction is what makes the fallback actually useful on multi-column pages, tables, and rotated/skewed scans, rather than a checkbox confidence threshold.
 
 ---
 
@@ -216,6 +219,12 @@ Every page/document, regardless of which engine produced it, is normalized into 
 - Charts/graphs: OCR does **not** attempt to extract underlying data values from a chart (that's chart understanding, a different problem, and guessing is worse than not guessing — especially for compliance use). Chart regions are flagged `subtype: "chart"` with `needs_review: true`.
 - Optional Phase 2+: a VLM-generated `alt_text` description for search/accessibility, explicitly labeled as *generated*, never presented as extracted data.
 
+### 10.4 Spell-correction policy
+
+- After normalization, each text block passes through automated, offline spell correction (`backend/worker/pipeline/spellcheck.py`, SymSpell-based) — but **only** for tokens where OCR confidence is below 0.90, and only for languages with a loaded frequency dictionary (currently `en`, `hi` — see the known-gaps note below). Numerics and alphanumeric IDs are never touched, protecting invoice numbers, dates, and codes.
+- Every correction is recorded on the block as `spell_corrections: [{original, corrected, edit_distance}]` — an empty list means nothing was changed, not that correction didn't run. This is the audit trail for the "we auto-corrected X" claim.
+- **Known limitation:** the dictionary source (hermitdave/FrequencyWords) has no Gujarati or Marathi wordlists at all (confirmed 404, not a download-and-forgot gap) — `gu`/`mr` blocks pass through `correct_block_text()` as a safe no-op until a dictionary from another source (e.g. Leipzig Corpora Collection) is wired in. `en`/`hi` are live. The dictionaries themselves are subtitle-derived (colloquial), so domain vocabulary (invoice/legal/medical terms) won't be recognized even for the active languages — flag this to reviewers rather than presenting corrections as domain-validated.
+
 ```json
 {
   "document_id": "uuid",
@@ -235,7 +244,8 @@ Every page/document, regardless of which engine produced it, is normalized into 
           "language": "en",
           "engine_used": "paddleocr | surya",
           "translated_text": null,
-          "translated_lang": null
+          "translated_lang": null,
+          "spell_corrections": []
         },
         {
           "block_id": "p1_b2",
@@ -438,3 +448,4 @@ ocr-pipeline/
 | 2026-08-07 | Added OCR engine cost/complexity/accuracy comparison table (Section 5) |
 | 2026-08-30 | Locked multilingual (no auto-translation), table (structured JSON, Markdown derived), and image/chart (crop+store, no chart-value guessing) policies in Section 10; updated BLOCKS entity accordingly |
 | 2026-08-30 | Extracted Section 4 detail into standalone `FEATURE_ROADMAP.md`; Section 4 now links to it |
+| 2026-09-13 | Implemented real Surya fallback engine (detection + recognition, pinned to `surya-ocr==0.17.1` — see §5/§9 for why), wired automated spell correction into the normalize stage (§10.4), fixed the `/jobs/{id}/result`, `/jobs/{id}/pages/{n}`, `/jobs/{id}/reprocess`, `GET /documents`, `DELETE /documents/{id}` stubs to read/write real DB + MinIO state, added page-preview image upload. Fine-tuned PP-OCRv6 recognition model wiring still blocked on exporting `model/paddle/best_model/` (raw training checkpoint, not a PaddleOCR-loadable inference export) and locating the training `dict.txt`. |

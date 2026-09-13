@@ -83,6 +83,7 @@ services:
       - docscribe_net
     volumes:
       - ~/.paddleocr:/root/.paddleocr
+      - ~/.cache/huggingface:/root/.cache/huggingface
 
   frontend:
     build:

@@ -73,9 +73,16 @@ def _process_single_page(
     pdf_bytes: bytes,
     page_index: int,
     page_number: int,
+    job_id: uuid.UUID,
 ) -> List[Dict[str, Any]]:
     """
     Rasterises, preprocesses, and runs OCR routing for one PDF page.
+
+    Also uploads the raw rasterized page image to
+    results/{job_id}/page_{page_number}.png so GET /jobs/{id}/pages/{n} has a
+    real preview to point at instead of a URL for an object that never
+    existed. Upload failure is logged but never fails the page — the OCR
+    result matters more than the preview image.
 
     Returns a list of raw block dicts (no engine_used / block_id yet — those
     are added by the router and normaliser respectively).
@@ -86,6 +93,19 @@ def _process_single_page(
     """
     try:
         image_bytes = rasterize_pdf_page(pdf_bytes, page_index)
+
+        try:
+            storage_service.client.put_object(
+                Bucket=storage_service.bucket,
+                Key=f"results/{job_id}/page_{page_number}.png",
+                Body=image_bytes,
+                ContentType="image/png",
+            )
+        except Exception:
+            logger.warning(
+                "Failed to upload page preview image for page %d", page_number, exc_info=True
+            )
+
         image = preprocess_page(image_bytes)
         blocks = router.process_page(image)
         logger.info("Page %d: %d blocks extracted", page_number, len(blocks))
@@ -232,7 +252,7 @@ def process_ocr(self, job_id_str: str, document_id_str: str) -> Dict[str, Any]:
                 },
             )
 
-            blocks = _process_single_page(router, pdf_bytes, page_index, page_number)
+            blocks = _process_single_page(router, pdf_bytes, page_index, page_number, job_id)
             raw_pages[page_number] = blocks
 
         # ---- Normalise --------------------------------------------------

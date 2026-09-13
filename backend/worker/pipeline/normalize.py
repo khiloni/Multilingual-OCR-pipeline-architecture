@@ -6,6 +6,8 @@ from typing import List, Dict, Any
 from datetime import datetime
 from uuid import UUID
 
+from worker.pipeline.spellcheck import CURRENT_LANGS, correct_block_text
+
 logger = logging.getLogger(__name__)
 
 def sort_reading_order(blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -45,6 +47,25 @@ def normalize_to_common_schema(
             block_type = block.get("type", "paragraph")
             engine_used = block.get("engine_used", "paddleocr")
 
+            # Automated spell correction (only touches low-confidence tokens,
+            # only for languages we have a fine-tuned model + dictionary for —
+            # see worker/pipeline/spellcheck.py). No per-token OCR confidence
+            # survives the engine layer, so the block's own confidence is used
+            # uniformly across its tokens.
+            spell_corrections = []
+            if text and lang in CURRENT_LANGS:
+                token_confidences = [confidence] * len(text.split())
+                spell_result = correct_block_text(text, lang, token_confidences=token_confidences)
+                text = spell_result.text
+                spell_corrections = [
+                    {
+                        "original": c.original,
+                        "corrected": c.corrected,
+                        "edit_distance": c.edit_distance,
+                    }
+                    for c in spell_result.corrections
+                ]
+
             all_confidences.append(confidence)
             if lang:
                 page_languages.add(lang)
@@ -56,7 +77,8 @@ def normalize_to_common_schema(
                 "bbox": bbox,
                 "confidence": confidence,
                 "language": lang,
-                "engine_used": engine_used
+                "engine_used": engine_used,
+                "spell_corrections": spell_corrections,
             })
 
         # Check if page has low confidence blocks
