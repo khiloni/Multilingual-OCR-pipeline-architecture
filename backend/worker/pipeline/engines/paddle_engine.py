@@ -38,15 +38,19 @@ _DET_MODEL_NAME = "PP-OCRv6_medium_det"
 _REC_MODEL_NAME = "PP-OCRv6_medium_rec"
 
 # If set, points PaddleOCR at a local fine-tuned recognition model directory
-# (the output of `tools/export_model.py` / PaddleX export mode) instead of
-# downloading the stock PP-OCRv6_medium_rec weights.
+# — a PaddleX-exported inference package (inference.json + inference.pdiparams
+# + inference.yml, character dict baked into the .yml's PostProcess section).
+# Set via docker-compose.yml → model/paddle/inference/rec_finetuned/, exported
+# with `paddlex==3.7.2` from the PP-OCRv6_medium_rec checkpoint in
+# model/paddle/ (see model/paddle/paddlex_environment.txt for the exact
+# export environment).
 # VERIFY the exact constructor kwarg name against your installed paddleocr
 # version before relying on this — PaddleOCR's 3.x constructor args have
 # already changed across minor versions once (the show_log removal). Check
 # `python -c "from paddleocr import PaddleOCR; help(PaddleOCR.__init__)"`
 # for the current param name (expected: text_recognition_model_dir) before
 # wiring a fine-tuned model in.
-_CUSTOM_REC_MODEL_DIR = os.environ.get("PADDLEOCR_REC_MODEL_DIR")  # None until fine-tune is exported
+_CUSTOM_REC_MODEL_DIR = os.environ.get("PADDLEOCR_REC_MODEL_DIR")
 
 # ---------------------------------------------------------------------------
 # Block-type heuristics (tunable)
