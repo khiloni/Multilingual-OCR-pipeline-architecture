@@ -81,6 +81,8 @@ services:
       - minio
     networks:
       - docscribe_net
+    volumes:
+      - ~/.paddleocr:/root/.paddleocr
 
   frontend:
     build:

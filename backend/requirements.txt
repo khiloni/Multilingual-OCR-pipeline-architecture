@@ -18,7 +18,20 @@ boto3>=1.26.0
 celery>=5.3.1
 redis>=4.6.0
 
-# Image & PDF Processing skeleton dependencies
+# Image & PDF Processing
 pymupdf>=1.22.0
 opencv-python-headless>=4.7.0
 numpy>=1.24.0
+
+# OCR engines — pinned to PaddleOCR 3.x family.
+# PaddleOCR 3.x has a completely different API from 2.x:
+#   constructor: use lang=, use_doc_orientation_classify=, enable_mkldnn= (not use_gpu/show_log)
+#   inference:   predict() not ocr(); returns OCRResult objects not list-of-pairs
+# See worker/pipeline/engines/paddle_engine.py for the full porting notes.
+# IMPORTANT: enable_mkldnn=False must be passed at PaddleOCR() init — without it,
+# PaddlePaddle 3.3.x raises ConvertPirAttribute2RuntimeAttribute crash on CPU inference.
+paddlepaddle>=3.0.0
+paddleocr>=3.0.0
+
+# Lightweight language identification (pure-Python, no model file download)
+langdetect>=1.0.9
