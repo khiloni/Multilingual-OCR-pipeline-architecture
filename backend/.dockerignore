@@ -1,0 +1,14 @@
+# Keeps the build context small and builds fast — .venv/ alone was several
+# hundred MB of small files being re-transferred into the Docker build
+# context on every single build (no caching benefit, pure network cost).
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.git/
+.gitignore
+*.md
