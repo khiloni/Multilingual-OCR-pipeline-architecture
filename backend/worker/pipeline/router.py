@@ -130,7 +130,23 @@ class EngineRouter:
             routing_decision,
         )
 
-        surya_blocks = self.surya.extract_text_and_layout(image)
+        # Surya is a *soft* fallback — any crash (model init failure,
+        # transformers version mismatch, inference error) must NEVER
+        # discard the real Paddle results that were already computed.
+        # If Surya fails we log the error, stamp all Paddle blocks as
+        # engine_used="paddleocr", and return them as-is.
+        try:
+            surya_blocks = self.surya.extract_text_and_layout(image)
+        except Exception as surya_exc:
+            logger.error(
+                "Surya fallback failed — using Paddle output as-is. Error: %s",
+                surya_exc,
+                exc_info=True,
+            )
+            for block in paddle_blocks:
+                block["engine_used"] = "paddleocr"
+            return paddle_blocks
+
         for block in surya_blocks:
             block["engine_used"] = "surya"
 

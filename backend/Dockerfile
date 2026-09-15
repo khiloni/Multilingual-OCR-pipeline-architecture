@@ -3,7 +3,7 @@
 
 # Future TODOs: Separate builder image from runner image (multi-stage) and include CUDA runtime dependencies.
 
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 

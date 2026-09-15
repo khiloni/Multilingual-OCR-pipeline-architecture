@@ -44,6 +44,10 @@ langdetect>=1.0.9
 # CPU-first Docker Compose setup without adding a second inference server.
 # See worker/pipeline/engines/surya_engine.py for the porting notes.
 surya-ocr==0.17.1
+# transformers 5.0.0 removed pad_token_id from config objects (SuryaDecoderConfig),
+# which crashes FoundationPredictor() at init time with an AttributeError.
+# surya-ocr 0.17.1 requires transformers <5.0.0.
+transformers>=4.37.0,<5.0.0
 
 # Automated post-OCR spell correction (SymSpell, per-language dictionaries)
 symspellpy>=6.7.7

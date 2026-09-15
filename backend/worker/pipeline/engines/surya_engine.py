@@ -100,9 +100,23 @@ class SuryaOCREngine:
                 "Loading Surya foundation/recognition/detection models "
                 "(weights download to the HF cache on first run if not present)"
             )
-            self._foundation = FoundationPredictor()
-            self._recognition = RecognitionPredictor(self._foundation)
-            self._detection = DetectionPredictor()
+            try:
+                self._foundation = FoundationPredictor()
+                self._recognition = RecognitionPredictor(self._foundation)
+                self._detection = DetectionPredictor()
+            except Exception as exc:
+                # Reset state so next call retries rather than returning
+                # half-initialised predictors.
+                self._foundation = None
+                self._recognition = None
+                self._detection = None
+                raise RuntimeError(
+                    f"Surya model instantiation failed: {exc}. "
+                    "This is likely a transformers version mismatch — "
+                    "ensure transformers>=4.37.0,<5.0.0 is installed "
+                    "(see requirements.txt)."
+                ) from exc
+
             logger.info("Surya models initialised successfully")
         return self._recognition, self._detection
 
