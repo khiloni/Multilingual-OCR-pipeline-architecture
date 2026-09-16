@@ -154,14 +154,24 @@ def deskew_image(image: np.ndarray) -> np.ndarray:
         return image
 
     rect = cv2.minAreaRect(largest)
-    angle = rect[2]  # in [-90, 0) for cv2.minAreaRect
+    angle = rect[2]
 
-    # Convert the raw minAreaRect angle to a conventional skew angle.
-    # minAreaRect returns angles in [-90, 0]; when the box is wider than tall
-    # the angle is close to 0 for slight CCW tilt and close to -90 for CW tilt.
-    # We normalise to the smallest magnitude correction.
+    # Normalise the raw minAreaRect angle to the smallest-magnitude
+    # correction. minAreaRect's angle convention for a near-axis-aligned
+    # box is NOT consistent across OpenCV versions — confirmed empirically
+    # that the same page image gives angle=-90.0 on OpenCV 5.0.0 but
+    # angle=+90.0 on OpenCV 4.10.0 (the version actually pinned in
+    # requirements-worker.txt / installed via opencv-python-headless), and
+    # the original code here only normalised the negative side (angle <
+    # -45), so a real axis-aligned page came back as a bogus 90-degree
+    # rotation on 4.10.0 — silently corrupting every page's geometry
+    # (bboxes, reading order, everything downstream) despite the page
+    # never actually being skewed. Handling both ends symmetrically fixes
+    # this regardless of which convention the installed OpenCV uses.
     if angle < -45:
         angle = 90 + angle   # e.g. -80° → +10°
+    elif angle > 45:
+        angle = angle - 90   # e.g. +90° → 0°, +80° → -10°
 
     if abs(angle) < _MIN_SKEW_DEG:
         logger.debug("deskew: angle %.2f° below threshold, skipping rotation", angle)

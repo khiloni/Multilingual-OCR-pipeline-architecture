@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
     status VARCHAR(50) NOT NULL DEFAULT 'queued',
     avg_confidence REAL,
+    error_message TEXT,
     started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     completed_at TIMESTAMP
 );
@@ -40,7 +41,13 @@ CREATE TABLE IF NOT EXISTS blocks (
     bbox JSON NOT NULL,
     confidence REAL NOT NULL,
     language VARCHAR(10),
-    engine_used VARCHAR(50) NOT NULL
+    engine_used VARCHAR(50) NOT NULL,
+    -- Sparse, populated only for their relevant block `type` (table/figure).
+    subtype VARCHAR(20),
+    table_data JSON,
+    image_url VARCHAR(512),
+    caption TEXT,
+    needs_review BOOLEAN
 );
 
 -- Indexes for performance queries

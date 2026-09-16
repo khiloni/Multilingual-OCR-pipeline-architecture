@@ -1,25 +1,10 @@
-# DocScribe Backend Dependencies
-# Purpose: List of Python packages required for the FastAPI server and Celery task execution.
-# Future TODOs: Upgrade torch/surya dependencies and PaddleOCR dependencies when integrating the full engines.
+# DocScribe worker (Celery) dependencies.
+# Runs the OCR pipeline itself, so it carries the full ML stack that the
+# API image (requirements-api.txt) deliberately excludes.
 
-# Web & API framework
-fastapi>=0.100.0
-uvicorn[standard]>=0.22.0
-python-multipart>=0.0.6
-pydantic>=2.0.0
-pydantic-settings>=2.0.0
-
-# Database & Storage
-sqlalchemy>=2.0.0
-psycopg2-binary>=2.9.6
-boto3>=1.26.0
-
-# Task queue
-celery>=5.3.1
-redis>=4.6.0
+-r requirements-common.txt
 
 # Image & PDF Processing
-pymupdf>=1.22.0
 opencv-python-headless>=4.7.0
 numpy>=1.24.0
 
@@ -32,6 +17,13 @@ numpy>=1.24.0
 # PaddlePaddle 3.3.x raises ConvertPirAttribute2RuntimeAttribute crash on CPU inference.
 paddlepaddle>=3.0.0
 paddleocr>=3.0.0
+# paddlex[ocr] extras — required for TableRecognitionPipelineV2 and
+# LayoutDetection (Phase 1 items 4/5: table + figure/chart detection).
+# Without the [ocr] extra, paddlex raises DependencyError at pipeline
+# creation time ("table_recognition_v2 requires additional dependencies").
+# Confirmed lightweight: pulls in scipy/scikit-learn/lxml/etc, no
+# torch/CUDA duplication (paddleocr already brought those in).
+paddlex[ocr]==3.7.2
 
 # Lightweight language identification (pure-Python, no model file download)
 langdetect>=1.0.9

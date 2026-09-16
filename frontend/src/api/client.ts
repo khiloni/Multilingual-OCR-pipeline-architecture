@@ -27,18 +27,35 @@ export interface JobStatusResponse {
   document_id: string;
   status: 'queued' | 'processing' | 'done' | 'failed';
   avg_confidence: number | null;
+  error_message: string | null;
   started_at: string;
   completed_at: string | null;
 }
 
+export interface TableCell {
+  row: number;
+  col: number;
+  row_span: number;
+  col_span: number;
+  text: string;
+  is_header: boolean;
+  confidence: number;
+}
+
 export interface Block {
   block_id: string;
-  type: 'heading' | 'paragraph' | 'table' | 'list' | 'caption';
-  text: string;
+  type: 'heading' | 'paragraph' | 'table' | 'list' | 'caption' | 'figure';
+  text?: string;
   bbox: [number, number, number, number];
   confidence: number;
-  language: string | null;
-  engine_used: 'paddleocr' | 'surya';
+  language?: string | null;
+  engine_used?: 'paddleocr' | 'surya' | 'table_pipeline' | 'layout' | 'error';
+  table?: { rows: number; cols: number; cells: TableCell[] };
+  subtype?: 'image' | 'chart';
+  image_url?: string | null;
+  caption?: string | null;
+  alt_text?: string | null;
+  needs_review?: boolean;
 }
 
 export interface Page {
@@ -67,6 +84,10 @@ export interface DocumentListResponse {
   storage_path: string;
   page_count: number;
   uploaded_at: string;
+  latest_job_id: string | null;
+  latest_status: 'queued' | 'processing' | 'done' | 'failed' | null;
+  avg_confidence: number | null;
+  error_message: string | null;
 }
 
 // API Methods

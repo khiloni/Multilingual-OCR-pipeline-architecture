@@ -1,0 +1,20 @@
+# DocScribe — shared dependencies needed by BOTH the API (backend) and
+# worker services. Split out of the old single requirements.txt so the API
+# image doesn't have to install the multi-GB torch/paddlepaddle stack that
+# only worker actually imports (see requirements-worker.txt).
+
+# Config / data models
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# Database & Storage
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.6
+boto3>=1.26.0
+
+# Task queue — backend enqueues via celery_app.send_task(), worker executes
+celery>=5.3.1
+redis>=4.6.0
+
+# PDF rasterization — used by backend (page-preview) and worker (page-to-image)
+pymupdf>=1.22.0

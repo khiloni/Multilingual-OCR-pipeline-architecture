@@ -19,7 +19,9 @@ ocr-pipeline/
 ├── backend/                     # API and worker implementations
 │   ├── app/                     # FastAPI application logic
 │   ├── worker/                  # Celery worker, ML engine triggers, and pipelines
-│   └── requirements.txt         # Backend Python dependencies
+│   ├── requirements-common.txt  # Shared deps (API + worker)
+│   ├── requirements-api.txt     # API-only deps (fastapi/uvicorn) — no ML stack
+│   └── requirements-worker.txt  # Worker-only deps (paddleocr/surya/transformers/opencv)
 ├── frontend/                    # TypeScript + React + Tailwind v4 UI
 │   ├── src/                     # Source modules (components, store, API clients)
 │   └── package.json             # Frontend Node.js dependencies
@@ -35,7 +37,8 @@ ocr-pipeline/
    cd backend
    python -m venv venv
    source venv/bin/activate  # On Windows use venv\Scripts\activate
-   pip install -r requirements.txt
+   pip install -r requirements-api.txt     # for running the FastAPI server
+   # or: pip install -r requirements-worker.txt   # for running the Celery worker
    ```
 3. Run the FastAPI development server:
    ```bash

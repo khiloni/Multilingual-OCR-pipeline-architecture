@@ -24,12 +24,7 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ result, markdownCont
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleDownload = () => {
-    const content = activeTab === 'markdown' 
-      ? markdownContent 
-      : JSON.stringify(result, null, 2);
-    
-    const extension = activeTab === 'markdown' ? 'md' : 'json';
+  const downloadFile = (content: string, extension: string) => {
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -38,7 +33,11 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ result, markdownCont
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
+
+  const handleDownloadJson = () => downloadFile(JSON.stringify(result, null, 2), 'json');
+  const handleDownloadMarkdown = () => downloadFile(markdownContent, 'md');
 
   return (
     <div className="flex flex-col h-full space-y-4">
@@ -79,11 +78,20 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ result, markdownCont
             {copied ? <Check size={16} className="text-emerald-400" /> : <Copy size={16} />}
           </button>
           <button
-            onClick={handleDownload}
-            title="Download file"
-            className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700 transition-all duration-200"
+            onClick={handleDownloadJson}
+            title="Download JSON"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700 transition-all duration-200 text-xs font-semibold"
           >
-            <Download size={16} />
+            <Download size={14} />
+            JSON
+          </button>
+          <button
+            onClick={handleDownloadMarkdown}
+            title="Download Markdown"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700 transition-all duration-200 text-xs font-semibold"
+          >
+            <Download size={14} />
+            Markdown
           </button>
         </div>
       </div>

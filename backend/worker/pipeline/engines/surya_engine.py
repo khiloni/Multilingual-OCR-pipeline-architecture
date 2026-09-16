@@ -3,7 +3,7 @@
 # (ARCHITECTURE.md §9). Converts Surya's own text-line output (its own bboxes,
 # not PaddleOCR's) into the Common Output Schema (ARCHITECTURE.md §10).
 #
-# Pinned to surya-ocr==0.17.1 (see backend/requirements.txt) — this is the last
+# Pinned to surya-ocr==0.17.1 (see backend/requirements-worker.txt) — this is the last
 # release using the plain-PyTorch FoundationPredictor/RecognitionPredictor/
 # DetectionPredictor API. 0.20.0+ replaced it with a SuryaInferenceManager that
 # requires a separate vllm (NVIDIA GPU) or llama.cpp inference server, which is
@@ -93,7 +93,7 @@ class SuryaOCREngine:
                     "surya-ocr is not installed or the installed version doesn't "
                     "expose FoundationPredictor/RecognitionPredictor/DetectionPredictor. "
                     "This engine requires surya-ocr==0.17.1 specifically — see "
-                    "requirements.txt / the module docstring for why."
+                    "requirements-worker.txt / the module docstring for why."
                 ) from exc
 
             logger.info(
@@ -114,7 +114,7 @@ class SuryaOCREngine:
                     f"Surya model instantiation failed: {exc}. "
                     "This is likely a transformers version mismatch — "
                     "ensure transformers>=4.37.0,<5.0.0 is installed "
-                    "(see requirements.txt)."
+                    "(see requirements-worker.txt)."
                 ) from exc
 
             logger.info("Surya models initialised successfully")

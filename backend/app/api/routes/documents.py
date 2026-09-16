@@ -22,15 +22,33 @@ def list_documents(
     db: Session = Depends(get_db)
 ):
     """
-    Lists uploaded documents (paginated), newest first.
+    Lists uploaded documents (paginated), newest first. Each entry includes
+    its LATEST job's status/confidence/error (a document can have several
+    jobs — reprocess creates a new one under the same document_id) so the
+    frontend document list can render a status badge in one request.
     """
-    return (
+    docs = (
         db.query(Document)
         .order_by(Document.uploaded_at.desc())
         .offset(offset)
         .limit(limit)
         .all()
     )
+    results: List[DocumentListResponse] = []
+    for doc in docs:
+        latest_job = max(doc.jobs, key=lambda j: j.started_at, default=None) if doc.jobs else None
+        results.append(DocumentListResponse(
+            id=doc.id,
+            filename=doc.filename,
+            storage_path=doc.storage_path,
+            page_count=doc.page_count,
+            uploaded_at=doc.uploaded_at,
+            latest_job_id=latest_job.id if latest_job else None,
+            latest_status=latest_job.status if latest_job else None,
+            avg_confidence=latest_job.avg_confidence if latest_job else None,
+            error_message=latest_job.error_message if latest_job else None,
+        ))
+    return results
 
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_document(

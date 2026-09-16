@@ -145,6 +145,7 @@ def get_job_status(job_id: uuid.UUID, db: Session = Depends(get_db)):
         document_id=job.document_id,
         status=job.status,
         avg_confidence=job.avg_confidence,
+        error_message=job.error_message,
         started_at=job.started_at,
         completed_at=job.completed_at,
     )
@@ -226,6 +227,11 @@ def get_page_result(
             "confidence": b.confidence,
             "language": b.language,
             "engine_used": b.engine_used,
+            "subtype": b.subtype,
+            "table": b.table_data,
+            "image_url": b.image_url,
+            "caption": b.caption,
+            "needs_review": b.needs_review,
         }
         for idx, b in enumerate(block_rows)
     ]

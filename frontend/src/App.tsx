@@ -7,6 +7,7 @@ import { UploadForm } from './components/UploadForm';
 import { JobStatus } from './components/JobStatus';
 import { PagePreview } from './components/PagePreview';
 import { ResultViewer } from './components/ResultViewer';
+import { DocumentList } from './components/DocumentList';
 import { api } from './api/client';
 import { Cpu, RotateCcw, AlertTriangle, Layers, Loader2} from 'lucide-react';
 
@@ -14,6 +15,7 @@ const OCRDashboard: React.FC = () => {
   const { state, setCurrentJob, updateJobStatus, updateOcrResult, setProcessing, resetState } = useAppStore();
   const [mockMarkdown, setMockMarkdown] = useState<string>('');
   const [uploading, setUploading] = useState(false);
+  const [documentListRefreshToken, setDocumentListRefreshToken] = useState(0);
 
   // Poll status when a job is active
   useEffect(() => {
@@ -57,10 +59,29 @@ const OCRDashboard: React.FC = () => {
       const response = await api.uploadDocument(file);
       setCurrentJob(response.job_id, response.document_id);
       setProcessing(true);
+      setDocumentListRefreshToken((t) => t + 1);
     } catch (err) {
       console.error('Upload failed:', err);
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleViewDocument = async (jobId: string, documentId: string) => {
+    resetState();
+    setCurrentJob(jobId, documentId);
+    setProcessing(false);
+    try {
+      const [status, resultJson, resultMd] = await Promise.all([
+        api.getJobStatus(jobId),
+        api.getJobResultJson(jobId),
+        api.getJobResultMarkdown(jobId),
+      ]);
+      updateJobStatus(status);
+      updateOcrResult(resultJson);
+      setMockMarkdown(resultMd.markdown);
+    } catch (err) {
+      console.error('Failed to load document results:', err);
     }
   };
 
@@ -136,6 +157,7 @@ const OCRDashboard: React.FC = () => {
               </p>
             </div>
             <UploadForm onUpload={handleUpload} disabled={uploading} />
+            <DocumentList onViewDocument={handleViewDocument} refreshToken={documentListRefreshToken} />
           </div>
         ) : state.isProcessing ? (
           // Progress Page (Processing State)
@@ -150,7 +172,9 @@ const OCRDashboard: React.FC = () => {
             </div>
             <h3 className="text-xl font-bold text-slate-200">OCR Extraction Failed</h3>
             <p className="text-slate-400 text-sm">
-              The processing pipeline encountered an unrecoverable failure during the execution step.
+              {state.jobStatus?.error_message
+                ? state.jobStatus.error_message
+                : 'The processing pipeline encountered an unrecoverable failure during the execution step.'}
             </p>
             <div className="flex gap-4 justify-center">
               <button

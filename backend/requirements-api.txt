@@ -1,0 +1,12 @@
+# DocScribe API (backend service) dependencies.
+# This image serves the FastAPI app only — it never imports worker.tasks
+# (Celery's `include=["worker.tasks"]` is only evaluated when a process
+# calls celery_app.worker_main(), not on send_task()/AsyncResult()), so it
+# does NOT need paddleocr/paddlepaddle/surya-ocr/transformers/opencv. Those
+# live in requirements-worker.txt only.
+
+-r requirements-common.txt
+
+fastapi>=0.100.0
+uvicorn[standard]>=0.22.0
+python-multipart>=0.0.6

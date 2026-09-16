@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     ForeignKey,
@@ -60,6 +61,7 @@ class Job(Base):
     )
     status = Column(String(50), nullable=False, default="queued", server_default=text("'queued'"))
     avg_confidence = Column(REAL, nullable=True)
+    error_message = Column(Text, nullable=True)
     started_at = Column(
         DateTime,
         nullable=False,
@@ -115,5 +117,13 @@ class Block(Base):
     confidence = Column(REAL, nullable=False)
     language = Column(String(10), nullable=True)
     engine_used = Column(String(50), nullable=False)
+    # Sparse columns, populated only for their relevant block `type` — see
+    # ARCHITECTURE.md §11 note. Added for Phase 1 items 4/5 (table/figure
+    # detection); table_data mirrors the JSON `table` field exactly.
+    subtype = Column(String(20), nullable=True)
+    table_data = Column(JSON, nullable=True)
+    image_url = Column(String(512), nullable=True)
+    caption = Column(Text, nullable=True)
+    needs_review = Column(Boolean, nullable=True)
 
     page = relationship("Page", back_populates="blocks")

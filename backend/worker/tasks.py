@@ -9,12 +9,15 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+import cv2
 import fitz  # PyMuPDF — used only to count pages here; rasterization is in preprocess
+import numpy as np
 
 from app.core.db import SessionLocal
 from app.models.models import Block, Document, Job, Page
 from app.services.storage import storage_service
 from worker.celery_app import celery_app
+from worker.pipeline.engines.structure_engine import StructureEngine, find_caption
 from worker.pipeline.normalize import convert_to_markdown, normalize_to_common_schema
 from worker.pipeline.preprocess import preprocess_page, rasterize_pdf_page
 from worker.pipeline.router import EngineRouter
@@ -22,10 +25,11 @@ from worker.pipeline.router import EngineRouter
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Module-level router — created once per Celery worker process so PaddleOCR
-# model weights are loaded only on worker startup, not per task invocation.
+# Module-level router/structure engine — created once per Celery worker
+# process so model weights are loaded only on worker startup, not per task.
 # ---------------------------------------------------------------------------
 _router: Optional[EngineRouter] = None
+_structure_engine: Optional[StructureEngine] = None
 
 
 def _get_router() -> EngineRouter:
@@ -34,6 +38,74 @@ def _get_router() -> EngineRouter:
         logger.info("Initialising EngineRouter for this worker process")
         _router = EngineRouter()
     return _router
+
+
+def _get_structure_engine() -> StructureEngine:
+    global _structure_engine
+    if _structure_engine is None:
+        logger.info("Initialising StructureEngine for this worker process")
+        _structure_engine = StructureEngine()
+    return _structure_engine
+
+
+# needs_review=False only when a figure clears this confidence bar AND a
+# caption was matched (ARCHITECTURE.md §10.3).
+_FIGURE_REVIEW_CONFIDENCE_THRESHOLD = 0.85
+
+
+def _build_figure_blocks(
+    image: np.ndarray,
+    figure_regions: List[Dict[str, Any]],
+    text_blocks: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Converts raw layout figure/chart regions into Common Output Schema
+    "figure" blocks (ARCHITECTURE.md §10.3). Crops are cut from the same
+    preprocessed image OCR ran on, so bbox coordinates line up exactly.
+
+    image_url is NOT set here — the block doesn't have its final block_id
+    yet (that's assigned by normalize.sort_reading_order()). The crop's PNG
+    bytes are stashed under the internal "_crop_bytes" key; a post-
+    normalize pass in process_ocr() uploads it to MinIO using the real
+    block_id and replaces "_crop_bytes" with the real "image_url", then
+    strips the internal key before persistence/serialization.
+    """
+    h, w = image.shape[:2]
+    blocks: List[Dict[str, Any]] = []
+
+    for region in figure_regions:
+        x0, y0, x1, y1 = region["bbox"]
+        xi0, yi0 = max(0, int(x0)), max(0, int(y0))
+        xi1, yi1 = min(w, int(x1)), min(h, int(y1))
+        if xi1 <= xi0 or yi1 <= yi0:
+            logger.warning("Skipping figure region with degenerate bbox %s", region["bbox"])
+            continue
+
+        crop = image[yi0:yi1, xi0:xi1]
+        ok, png_bytes = cv2.imencode(".png", crop)
+        if not ok:
+            logger.warning("Failed to encode figure crop as PNG, skipping region %s", region["bbox"])
+            continue
+
+        caption = find_caption(region["bbox"], text_blocks)
+        confidence = region["confidence"]
+        needs_review = not (confidence >= _FIGURE_REVIEW_CONFIDENCE_THRESHOLD and caption is not None)
+
+        blocks.append({
+            "type": "figure",
+            "subtype": region["subtype"],
+            "bbox": [float(x0), float(y0), float(x1), float(y1)],
+            "confidence": confidence,
+            "text": "",  # figures carry no OCR text of their own
+            "language": "und",
+            "engine_used": "layout",
+            "caption": caption,
+            "alt_text": None,
+            "needs_review": needs_review,
+            "_crop_bytes": png_bytes.tobytes(),
+        })
+
+    return blocks
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +142,7 @@ def _count_pdf_pages(pdf_bytes: bytes) -> int:
 
 def _process_single_page(
     router: EngineRouter,
+    structure_engine: StructureEngine,
     pdf_bytes: bytes,
     page_index: int,
     page_number: int,
@@ -108,8 +181,25 @@ def _process_single_page(
 
         image = preprocess_page(image_bytes)
         blocks = router.process_page(image)
-        logger.info("Page %d: %d blocks extracted", page_number, len(blocks))
-        return blocks
+        logger.info("Page %d: %d text blocks extracted", page_number, len(blocks))
+
+        # Structure detection (tables + figures/charts — Phase 1 items 4/5).
+        # Runs unconditionally, unlike the confidence-gated Surya fallback —
+        # a table/figure needs to be caught regardless of plain-text
+        # confidence. Additive only: a failure here must never lose the
+        # text blocks already extracted above (structure_engine already
+        # catches its own exceptions and returns empty lists on failure).
+        structure = structure_engine.analyze_page(image)
+        table_blocks = [
+            {**t, "text": "", "language": "und", "engine_used": "table_pipeline"}
+            for t in structure["tables"]
+        ]
+        figure_blocks = _build_figure_blocks(image, structure["figure_regions"], blocks)
+        logger.info(
+            "Page %d: %d table block(s), %d figure/chart block(s)",
+            page_number, len(table_blocks), len(figure_blocks),
+        )
+        return blocks + table_blocks + figure_blocks
     except Exception as exc:
         logger.error(
             "Page %d processing failed: %s",
@@ -129,6 +219,36 @@ def _process_single_page(
                 "engine_used": "error",
             }
         ]
+
+
+def _upload_figure_crops(normalized_output: Dict[str, Any], job_id: uuid.UUID) -> None:
+    """
+    Uploads each figure block's stashed crop PNG to MinIO now that
+    normalize_to_common_schema() has assigned real block_ids, then sets
+    image_url and strips the internal "_crop_bytes" key so it never reaches
+    persistence or the JSON/Markdown artifacts. Mutates normalized_output
+    in place. Upload failure is logged and leaves image_url as None rather
+    than failing the whole job — a missing figure image is recoverable
+    (reprocess), losing the rest of the page's results is not.
+    """
+    for page_data in normalized_output.get("pages", []):
+        for block in page_data.get("blocks", []):
+            crop_bytes = block.pop("_crop_bytes", None)
+            if crop_bytes is None:
+                continue
+            storage_path = f"results/{job_id}/{block['block_id']}.png"
+            try:
+                storage_service.client.put_object(
+                    Bucket=storage_service.bucket,
+                    Key=storage_path,
+                    Body=crop_bytes,
+                    ContentType="image/png",
+                )
+                block["image_url"] = f"minio://{storage_service.bucket}/{storage_path}"
+            except Exception:
+                logger.warning(
+                    "Failed to upload figure crop for block_id=%s", block["block_id"], exc_info=True
+                )
 
 
 def _persist_pages_and_blocks(
@@ -153,15 +273,21 @@ def _persist_pages_and_blocks(
         db.flush()  # populate page_row.id before referencing it in Block rows
 
         for block_data in page_data.get("blocks", []):
+            block_type = block_data.get("type", "paragraph")
             block_row = Block(
                 id=uuid.uuid4(),
                 page_id=page_row.id,
-                type=block_data.get("type", "paragraph"),
+                type=block_type,
                 content=block_data.get("text", ""),
                 bbox=block_data.get("bbox", [0.0, 0.0, 0.0, 0.0]),
                 confidence=block_data.get("confidence", 0.0),
                 language=block_data.get("language", "und"),
                 engine_used=block_data.get("engine_used", "paddleocr"),
+                subtype=block_data.get("subtype"),
+                table_data=block_data.get("table") if block_type == "table" else None,
+                image_url=block_data.get("image_url") if block_type == "figure" else None,
+                caption=block_data.get("caption") if block_type == "figure" else None,
+                needs_review=block_data.get("needs_review") if block_type == "figure" else None,
             )
             db.add(block_row)
 
@@ -234,6 +360,7 @@ def process_ocr(self, job_id_str: str, document_id_str: str) -> Dict[str, Any]:
 
         # ---- Process each page ------------------------------------------
         router = _get_router()
+        structure_engine = _get_structure_engine()
         raw_pages: Dict[int, List[Dict[str, Any]]] = {}
 
         self.update_state(
@@ -252,7 +379,9 @@ def process_ocr(self, job_id_str: str, document_id_str: str) -> Dict[str, Any]:
                 },
             )
 
-            blocks = _process_single_page(router, pdf_bytes, page_index, page_number, job_id)
+            blocks = _process_single_page(
+                router, structure_engine, pdf_bytes, page_index, page_number, job_id
+            )
             raw_pages[page_number] = blocks
 
         # ---- Normalise --------------------------------------------------
@@ -260,6 +389,7 @@ def process_ocr(self, job_id_str: str, document_id_str: str) -> Dict[str, Any]:
             state="PROGRESS", meta={"percent": 82, "status": "Normalising output schema"}
         )
         normalized_output = normalize_to_common_schema(doc_id, document.filename, raw_pages)
+        _upload_figure_crops(normalized_output, job_id)
         markdown_output = convert_to_markdown(normalized_output)
 
         # ---- Persist Page + Block rows to Postgres ----------------------
@@ -302,6 +432,7 @@ def process_ocr(self, job_id_str: str, document_id_str: str) -> Dict[str, Any]:
         try:
             job = db.query(Job).filter(Job.id == job_id).first()
             if job is not None:
+                job.error_message = str(exc)
                 _set_job_status(db, job, "failed", completed=True)
         except Exception:
             logger.exception(

@@ -165,7 +165,7 @@ class PaddleOCREngine:
             except ImportError as exc:
                 raise RuntimeError(
                     "paddleocr is not installed. "
-                    "Add 'paddlepaddle' and 'paddleocr' to requirements.txt and rebuild."
+                    "Add 'paddlepaddle' and 'paddleocr' to requirements-worker.txt and rebuild."
                 ) from exc
 
             kwargs: Dict[str, Any] = dict(
