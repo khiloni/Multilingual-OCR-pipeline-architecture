@@ -67,9 +67,33 @@ build/
 Thumbs.db
 
 # =========================
+# Logs / temp / generated files
+# =========================
+*.log
+logs/
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# =========================
+# Editor / tool config
+# =========================
+.claude/
+
+# =========================
 # ML model artifacts
 # =========================
-# Training checkpoints (.pdparams/.pdopt) run 130-250MB each, well over
-# GitHub's 100MB hard limit — never commit these directly. Use Git LFS,
-# cloud storage, or a release asset instead once there's an export pipeline.
-model/
+# Training checkpoints and intermediate exports (.pdparams/.pdopt, raw
+# training logs, alternate/experimental exports) are excluded by default —
+# only the final inference export is tracked. Checkpoints routinely run
+# 130-250MB+, well over GitHub's 100MB hard limit; use Git LFS, cloud
+# storage, or a release asset instead if a checkpoint ever needs to be
+# shared.
+model/*
+!model/paddle/
+model/paddle/*
+!model/paddle/inference/
+model/paddle/inference/*
+!model/paddle/inference/rec_finetuned/
