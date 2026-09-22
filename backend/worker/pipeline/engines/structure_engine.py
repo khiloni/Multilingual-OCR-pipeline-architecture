@@ -1,18 +1,21 @@
-# Purpose: Layout-aware structure detection — tables (Phase 1 item 4) and
-# figures/charts (Phase 1 item 5) — using PaddleX's TableRecognitionPipelineV2.
+# Purpose: Layout-aware structure detection — tables and figures/charts.
 #
-# ONE call to TableRecognitionPipelineV2.predict() per page returns BOTH:
-#   - table_res_list: table structure (cell boxes, per-cell OCR, HTML) for
-#     any detected table region.
-#   - layout_det_res: the full-page layout detection (PP-DocLayout-L) used
-#     internally to find tables in the first place — which also happens to
-#     label figure/chart/title regions, so a second, separate LayoutDetection
-#     pass isn't needed for item 5.
+# Per page:
+#   1. Layout detection (one CNN pass, a few seconds on CPU) finds table /
+#      chart / image regions across the whole page.
+#   2. Figure and chart regions come straight from that layout result.
+#   3. The table pipeline (structure recognition + cell OCR) runs ONLY on the
+#      cropped table regions, and is only loaded the first time a table is
+#      actually seen — a page with no table pays for layout detection and
+#      nothing else.
 #
-# This engine does NOT do its own text-line OCR for the rest of the page —
-# that stays owned by router.py's PaddleOCR/Surya pass (ARCHITECTURE.md §9).
-# It reuses the fine-tuned recognition model (PADDLEOCR_REC_MODEL_DIR) only
-# for the text found inside detected table cells.
+# The earlier design ran the full table pipeline on the whole page every time,
+# which internally re-ran full-page text detection and recognition — roughly
+# 40-50s per page even when the page had no table at all.
+#
+# This engine does NOT do text-line OCR for the rest of the page — that stays
+# owned by router.py's PaddleOCR/Surya pass. It reuses the fine-tuned
+# recognition model (PADDLEOCR_REC_MODEL_DIR) only for text inside table cells.
 #
 # Runs unconditionally per page (not confidence-gated like the Surya
 # fallback) — tables/figures need to be caught regardless of how confident
@@ -27,39 +30,40 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+_LAYOUT_MODEL_NAME = "PP-DocLayout-L"
 _DET_MODEL_NAME = "PP-OCRv6_medium_det"
 _REC_MODEL_NAME = "PP-OCRv6_medium_rec"
 _CUSTOM_REC_MODEL_DIR = os.environ.get("PADDLEOCR_REC_MODEL_DIR")
 
-# Layout labels (from PP-DocLayout-L, confirmed empirically — see
-# ARCHITECTURE.md changelog) that map to a Common Output Schema "figure"
-# block. "chart" gets subtype="chart"; everything else here gets "image".
+# Layout labels that map to a Common Output Schema "figure" block.
+# "chart" gets subtype="chart"; everything else here gets "image".
 _CHART_LABELS = {"chart"}
 _FIGURE_LABELS = {"image", "figure", "picture"} | _CHART_LABELS
+_TABLE_LABELS = {"table"}
 
-# Labels whose OCR'd text is a caption candidate for a nearby figure/table.
-_TITLE_LABELS = {"table_title", "chart_title", "figure_title"}
-
-# ARCHITECTURE.md §10.3: caption text must match this pattern near the bbox.
+# ARCHITECTURE.md §9.3: caption text must match this pattern near the bbox.
 _CAPTION_RE = re.compile(r"^(Figure|Fig\.|Table)\s*\d+", re.IGNORECASE)
-
-# needs_review=False only when confidence clears this bar AND a caption matched.
-_FIGURE_REVIEW_CONFIDENCE_THRESHOLD = 0.85
 
 # How far (in px, at the pipeline's working resolution) a caption candidate's
 # bbox may sit from a figure/table's bbox and still count as "nearby".
 _CAPTION_PROXIMITY_PX = 80.0
 
+# Extra pixels kept around a table region when cropping it for the table
+# pipeline, so cell borders on the region edge aren't clipped.
+_TABLE_CROP_PADDING_PX = 10
+
 
 class StructureEngine:
     """
-    Lazily-initialised (same pattern as PaddleOCREngine/SuryaOCREngine)
-    wrapper around PaddleX's TableRecognitionPipelineV2.
+    Lazily-initialised (same pattern as PaddleOCREngine/SuryaOCREngine):
+    the layout model loads on the first page, and the heavier table pipeline
+    loads only when the first table is found.
     """
 
     def __init__(self) -> None:
-        self._pipeline = None
-        logger.info("StructureEngine created (table/layout models load lazily on first call)")
+        self._layout = None
+        self._table_pipeline = None
+        logger.info("StructureEngine created (models load lazily on first use)")
 
     # ------------------------------------------------------------------
     # Public API
@@ -67,7 +71,7 @@ class StructureEngine:
 
     def analyze_page(self, image: np.ndarray) -> Dict[str, List[Dict[str, Any]]]:
         """
-        Runs table + layout detection on a preprocessed page image.
+        Runs layout + table detection on a preprocessed page image.
 
         Returns:
             {
@@ -82,19 +86,14 @@ class StructureEngine:
             Both lists are empty (not an exception) if detection fails —
             structure detection is additive; it must never break the page.
         """
-        pipeline = self._get_pipeline()
         try:
-            results = list(pipeline.predict(image))
+            layout_boxes = self._detect_layout(image)
         except Exception as exc:
-            logger.error("TableRecognitionPipelineV2.predict() failed: %s", exc, exc_info=True)
+            logger.error("Layout detection failed: %s", exc, exc_info=True)
             return {"tables": [], "figure_regions": []}
 
-        if not results:
-            return {"tables": [], "figure_regions": []}
-
-        result = results[0]
-        tables = self._parse_tables(result)
-        figure_regions = self._parse_figure_regions(result)
+        figure_regions = self._figure_regions(layout_boxes)
+        tables = self._detect_tables(image, layout_boxes)
 
         logger.info(
             "StructureEngine: %d table(s), %d figure/chart region(s) detected",
@@ -103,11 +102,54 @@ class StructureEngine:
         return {"tables": tables, "figure_regions": figure_regions}
 
     # ------------------------------------------------------------------
-    # Private helpers
+    # Layout
     # ------------------------------------------------------------------
 
-    def _get_pipeline(self):
-        if self._pipeline is None:
+    def _get_layout_model(self):
+        if self._layout is None:
+            from paddleocr import LayoutDetection
+
+            logger.info("Initialising layout detection model (%s)", _LAYOUT_MODEL_NAME)
+            # enable_mkldnn=False — see paddle_engine.py: the oneDNN runtime
+            # crashes on CPU inference in this PaddlePaddle version.
+            self._layout = LayoutDetection(model_name=_LAYOUT_MODEL_NAME, enable_mkldnn=False)
+        return self._layout
+
+    def _detect_layout(self, image: np.ndarray) -> List[Dict[str, Any]]:
+        results = list(self._get_layout_model().predict(image))
+        if not results:
+            return []
+        boxes = results[0].get("boxes") or []
+        layout: List[Dict[str, Any]] = []
+        for box in boxes:
+            coord = box.get("coordinate")
+            if coord is None or len(coord) != 4:
+                continue
+            layout.append({
+                "label": box.get("label"),
+                "score": float(box.get("score", 0.0)),
+                "coordinate": [float(v) for v in coord],
+            })
+        return layout
+
+    @staticmethod
+    def _figure_regions(layout_boxes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return [
+            {
+                "bbox": box["coordinate"],
+                "subtype": "chart" if box["label"] in _CHART_LABELS else "image",
+                "confidence": box["score"],
+            }
+            for box in layout_boxes
+            if box["label"] in _FIGURE_LABELS
+        ]
+
+    # ------------------------------------------------------------------
+    # Tables
+    # ------------------------------------------------------------------
+
+    def _get_table_pipeline(self):
+        if self._table_pipeline is None:
             from paddleocr import TableRecognitionPipelineV2
 
             kwargs: Dict[str, Any] = dict(
@@ -115,52 +157,63 @@ class StructureEngine:
                 text_recognition_model_name=_REC_MODEL_NAME,
                 use_doc_orientation_classify=False,
                 use_doc_unwarping=False,
-                # CRITICAL — see paddle_engine.py for the full explanation:
-                # without this, PaddlePaddle 3.3.x's oneDNN runtime raises
-                # "ConvertPirAttribute2RuntimeAttribute not supported" on
-                # CPU inference. Confirmed reproduced and fixed here too.
+                # Layout was already done page-wide; this pipeline only ever
+                # sees a crop that is the table, so skip its own layout pass.
+                use_layout_detection=False,
                 enable_mkldnn=False,
             )
             if _CUSTOM_REC_MODEL_DIR:
                 kwargs["text_recognition_model_dir"] = _CUSTOM_REC_MODEL_DIR
-                logger.info(
-                    "StructureEngine loading fine-tuned rec model from %s",
-                    _CUSTOM_REC_MODEL_DIR,
-                )
-            logger.info("Initialising TableRecognitionPipelineV2 (weights download on first run if not cached)")
-            self._pipeline = TableRecognitionPipelineV2(**kwargs)
-            logger.info("TableRecognitionPipelineV2 initialised successfully")
-        return self._pipeline
+                logger.info("Table pipeline using fine-tuned rec model from %s", _CUSTOM_REC_MODEL_DIR)
+            logger.info("Initialising table recognition pipeline")
+            self._table_pipeline = TableRecognitionPipelineV2(**kwargs)
+        return self._table_pipeline
 
-    def _parse_tables(self, result: Any) -> List[Dict[str, Any]]:
-        table_res_list = result.get("table_res_list") if hasattr(result, "get") else None
-        if not table_res_list:
-            return []
-
+    def _detect_tables(
+        self, image: np.ndarray, layout_boxes: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        h, w = image.shape[:2]
         tables: List[Dict[str, Any]] = []
-        for table_res in table_res_list:
+
+        for box in layout_boxes:
+            if box["label"] not in _TABLE_LABELS:
+                continue
+            x0, y0, x1, y1 = box["coordinate"]
+            cx0 = max(0, int(x0) - _TABLE_CROP_PADDING_PX)
+            cy0 = max(0, int(y0) - _TABLE_CROP_PADDING_PX)
+            cx1 = min(w, int(x1) + _TABLE_CROP_PADDING_PX)
+            cy1 = min(h, int(y1) + _TABLE_CROP_PADDING_PX)
+            if cx1 <= cx0 or cy1 <= cy0:
+                continue
+
             try:
-                block = self._parse_single_table(table_res)
+                results = list(self._get_table_pipeline().predict(
+                    image[cy0:cy1, cx0:cx1],
+                    use_doc_orientation_classify=False,
+                    use_doc_unwarping=False,
+                    use_layout_detection=False,
+                ))
+            except Exception as exc:
+                logger.error("Table recognition failed for region %s: %s", box["coordinate"], exc, exc_info=True)
+                continue
+
+            table_res_list = results[0].get("table_res_list") if results else None
+            if not table_res_list:
+                continue
+            try:
+                # bbox comes from layout detection (already in page
+                # coordinates) rather than from the crop-relative cell boxes.
+                block = self._parse_single_table(table_res_list[0], [float(x0), float(y0), float(x1), float(y1)])
             except Exception as exc:
                 logger.warning("Skipping malformed table result: %s", exc, exc_info=True)
                 continue
             if block is not None:
                 tables.append(block)
+
         return tables
 
     @staticmethod
-    def _bbox_from_cell_boxes(cell_box_list: List[Any]) -> List[float]:
-        if not cell_box_list:
-            return [0.0, 0.0, 0.0, 0.0]
-        xs0, ys0, xs1, ys1 = [], [], [], []
-        for box in cell_box_list:
-            b = [float(v) for v in box]
-            xs0.append(b[0]); ys0.append(b[1]); xs1.append(b[2]); ys1.append(b[3])
-        return [min(xs0), min(ys0), max(xs1), max(ys1)]
-
-    def _parse_single_table(self, table_res: Any) -> Optional[Dict[str, Any]]:
-        cell_box_list = table_res.get("cell_box_list")
-        cell_box_list = [] if cell_box_list is None else cell_box_list
+    def _parse_single_table(table_res: Any, bbox: List[float]) -> Optional[Dict[str, Any]]:
         pred_html = table_res.get("pred_html") or ""
         table_ocr_pred = table_res.get("table_ocr_pred") or {}
         # rec_scores comes back as a numpy ndarray, not a list — `x or []`
@@ -178,41 +231,10 @@ class StructureEngine:
 
         return {
             "type": "table",
-            "bbox": self._bbox_from_cell_boxes(cell_box_list),
+            "bbox": bbox,
             "confidence": block_confidence,
             "table": structure,
         }
-
-    def _parse_figure_regions(self, result: Any) -> List[Dict[str, Any]]:
-        layout = result.get("layout_det_res") if hasattr(result, "get") else None
-        if not layout:
-            return []
-        boxes = layout.get("boxes") if hasattr(layout, "get") else None
-        if not boxes:
-            return []
-
-        regions: List[Dict[str, Any]] = []
-        for box in boxes:
-            label = box.get("label")
-            if label not in _FIGURE_LABELS:
-                continue
-            coord = box.get("coordinate")
-            if coord is None or len(coord) != 4:
-                continue
-            regions.append({
-                "bbox": [float(v) for v in coord],
-                "subtype": "chart" if label in _CHART_LABELS else "image",
-                "confidence": float(box.get("score", 0.0)),
-            })
-        return regions
-
-    def extract_title_candidates(self, result_boxes: Any) -> List[Dict[str, Any]]:
-        """Unused placeholder retained for symmetry — caption matching is
-        done by the caller against already-extracted OCR text blocks
-        (see tasks.py), not against this engine's own title-label boxes,
-        since ARCHITECTURE.md §10.3 specifies regex matching on OCR'd text,
-        not on the layout model's title/non-title classification alone."""
-        return []
 
 
 # ---------------------------------------------------------------------------

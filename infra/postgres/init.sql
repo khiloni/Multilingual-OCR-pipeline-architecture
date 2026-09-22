@@ -47,7 +47,10 @@ CREATE TABLE IF NOT EXISTS blocks (
     table_data JSON,
     image_url VARCHAR(512),
     caption TEXT,
-    needs_review BOOLEAN
+    needs_review BOOLEAN,
+    -- Populated for every block type by the post-processing stage:
+    -- "accepted" | "flagged" | "needs_review", from the block's own confidence.
+    review_status VARCHAR(20)
 );
 
 -- Indexes for performance queries

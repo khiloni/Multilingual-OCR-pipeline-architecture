@@ -88,6 +88,7 @@ class BlockSchema(BaseModel):
     caption: Optional[str] = None
     alt_text: Optional[str] = None
     needs_review: Optional[bool] = None
+    review_status: Optional[Literal["accepted", "flagged", "needs_review"]] = None
 
 class PageSchema(BaseModel):
     """

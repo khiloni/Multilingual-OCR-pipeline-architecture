@@ -28,7 +28,7 @@ Documents need their textual content extracted reliably so downstream systems �
 ## Features
 
 - **Multilingual OCR** — English, Hindi, Marathi, and Gujarati, with a fine-tuned recognition model (see below).
-- **Hybrid engine routing** — a fast primary engine for the common case, with an automatic layout-aware fallback for low-confidence, multi-column, or mixed-script pages.
+- **Hybrid engine routing** — a fast primary engine for the common case, with an automatic layout-aware fallback for low-confidence pages and scripts outside the primary model's language set.
 - **Structured output** — every page returns text blocks with bounding boxes, per-block confidence, and language, not a text blob.
 - **Reading-order correction** — multi-column pages are reconstructed in correct reading order, not top-to-bottom-then-interleaved.
 - **Table extraction** — tables are returned as structured row/column/cell data (with merged-cell spans and per-cell confidence), not flattened text.
@@ -58,7 +58,7 @@ The recognition stage uses a fine-tuned PaddleOCR model trained specifically for
 1. **Upload** — a PDF is submitted via the API and stored in object storage; a job is queued.
 2. **Rasterize** — each page is rendered to an image.
 3. **Preprocess** — deskew and denoise.
-4. **Recognize** — the primary OCR engine runs on every page; pages that come back low-confidence, contain a table, or mix scripts are re-run through the fallback engine and merged.
+4. **Recognize** — the primary OCR engine runs on every page; pages that come back low-confidence, or contain a script the primary model wasn't trained on, are re-run through the fallback engine and merged.
 5. **Detect structure** — tables and figures/charts are located, extracted, and (for figures) cropped to object storage.
 6. **Normalize** — all blocks are reordered into correct reading order and assembled into the common output schema.
 7. **Spell-correct** — low-confidence text tokens are corrected against offline dictionaries; every correction is logged.

@@ -106,6 +106,12 @@ def normalize_to_common_schema(
             confidence = block.get("confidence", 0.0)
             all_confidences.append(confidence)
 
+            # review_status/needs_review are set upstream by
+            # postprocess.apply_review_routing() for every block type —
+            # see worker/pipeline/postprocess.py. Defaults here only cover
+            # blocks that somehow bypassed that stage.
+            review_status = block.get("review_status", "accepted")
+
             if block_type == "table":
                 # ARCHITECTURE.md §10.2 — structured cell data, no top-level
                 # "text"/"language"/"engine_used"/spell-check (cell text
@@ -117,6 +123,8 @@ def normalize_to_common_schema(
                     "bbox": bbox,
                     "confidence": confidence,
                     "table": block.get("table", {"rows": 0, "cols": 0, "cells": []}),
+                    "review_status": review_status,
+                    "needs_review": block.get("needs_review", review_status == "needs_review"),
                 })
                 continue
 
@@ -134,6 +142,7 @@ def normalize_to_common_schema(
                     "image_url": block.get("image_url"),
                     "caption": block.get("caption"),
                     "alt_text": block.get("alt_text"),
+                    "review_status": review_status,
                     "needs_review": block.get("needs_review", True),
                 }
                 if "_crop_bytes" in block:
@@ -177,6 +186,8 @@ def normalize_to_common_schema(
                 "language": lang,
                 "engine_used": engine_used,
                 "spell_corrections": spell_corrections,
+                "review_status": review_status,
+                "needs_review": block.get("needs_review", review_status == "needs_review"),
             })
 
         # Check if page has low confidence blocks

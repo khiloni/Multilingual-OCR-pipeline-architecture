@@ -125,5 +125,9 @@ class Block(Base):
     image_url = Column(String(512), nullable=True)
     caption = Column(Text, nullable=True)
     needs_review = Column(Boolean, nullable=True)
+    # Populated for every block type by the post-processing stage
+    # (worker/pipeline/postprocess.py): "accepted" | "flagged" | "needs_review",
+    # derived from the block's own confidence.
+    review_status = Column(String(20), nullable=True)
 
     page = relationship("Page", back_populates="blocks")

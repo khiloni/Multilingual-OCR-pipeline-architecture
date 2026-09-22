@@ -46,6 +46,13 @@ _SCRIPT_MIN_SHARE: float = 0.10
 # Minimum number of distinct script families that triggers the mixed-script flag.
 _MIXED_SCRIPT_MIN_FAMILIES: int = 2
 
+# Script families the fine-tuned primary recognition model covers
+# (English, Hindi, Marathi, Gujarati). Mixing these with each other does not
+# trigger the Surya fallback — only a script outside this set does. Sending
+# every multilingual page to Surya cost minutes per page (model load plus CPU
+# inference) for pages the primary model already reads confidently.
+_PRIMARY_MODEL_SCRIPTS = frozenset({"latin", "devanagari", "gujarati"})
+
 # IOU threshold for considering two bboxes as "covering the same region"
 # during block merging.
 _IOU_MERGE_THRESHOLD: float = 0.30
@@ -270,11 +277,18 @@ def _detect_mixed_script(blocks: List[Dict[str, Any]]) -> bool:
     if total_chars == 0:
         return False
 
-    families_above_threshold = sum(
-        1 for count in script_counts.values()
+    families_above = {
+        name for name, count in script_counts.items()
         if count / total_chars >= _SCRIPT_MIN_SHARE
+    }
+    families_above_threshold = len(families_above)
+    # Only a mix that includes a script the primary model wasn't trained on
+    # is a routing problem — a page that mixes only supported scripts (e.g.
+    # English + Hindi + Gujarati) is the normal case, not a fallback trigger.
+    is_mixed = (
+        families_above_threshold >= _MIXED_SCRIPT_MIN_FAMILIES
+        and bool(families_above - _PRIMARY_MODEL_SCRIPTS)
     )
-    is_mixed = families_above_threshold >= _MIXED_SCRIPT_MIN_FAMILIES
     if is_mixed:
         logger.info(
             "_detect_mixed_script: %d script families detected above %.0f%% share: %s",

@@ -76,7 +76,7 @@ services:
       args:
         REQUIREMENTS_FILE: requirements-worker.txt
     container_name: docscribe_worker
-    command: celery -A worker.celery_app worker --loglevel=info
+    command: celery -A worker.celery_app worker --loglevel=info --concurrency=1 --prefetch-multiplier=1
     environment:
       - POSTGRES_HOST=postgres
       - REDIS_HOST=redis

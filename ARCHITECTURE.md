@@ -32,7 +32,7 @@ An end-to-end, open-source OCR pipeline that:
 | Engine | Role | Why |
 |---|---|---|
 | **PaddleOCR** (with a fine-tuned recognition model — see README) | Primary | Fast, CPU-viable, strong multilingual support |
-| **Surya** | Fallback | Layout-aware detection + recognition, used selectively for low-confidence, table, or mixed-script pages — not a drop-in recognition swap. Its own layout detection produces the bboxes for the regions it covers, which is what makes it useful on multi-column pages and complex layouts rather than just a second-opinion recognizer. |
+| **Surya** | Fallback | Layout-aware detection + recognition, used selectively for low-confidence pages or pages containing a script the primary model wasn't trained on — not a drop-in recognition swap. Pages that mix only the primary model's own languages (English, Hindi, Marathi, Gujarati) stay on the primary engine. Its own layout detection produces the bboxes for the regions it covers, which is what makes it useful on multi-column pages and complex layouts rather than just a second-opinion recognizer. |
 
 Routing between the two is confidence- and layout-driven (see Section 7).
 
@@ -151,7 +151,7 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     Start([Page Image Ready]) --> Run[Run PaddleOCR]
-    Run --> Score{Confidence >= threshold\nAND no table\nAND single script?}
+    Run --> Score{Confidence >= threshold\nAND no script outside the\nprimary model's languages?}
     Score -->|Yes| Accept[Accept PaddleOCR output]
     Score -->|No| Fallback[Run Surya: detection + recognition]
     Fallback --> Merge[Merge best-of-both by block overlap:\nSurya's bboxes are kept for its regions,\nPaddle only wins individual blocks\nwith higher confidence]
@@ -186,7 +186,16 @@ Every page/document, regardless of which engine produced it, is normalized into 
 - Charts/graphs: OCR does **not** attempt to extract underlying data values from a chart — that's a different problem, and guessing is worse than not guessing. Chart regions are flagged `subtype: "chart"` with `needs_review: true`.
 - `alt_text` is reserved for a future generated-description field, explicitly labeled as generated, never presented as extracted data.
 
-### 9.4 Spell-correction policy
+### 9.4 Post-processing & review routing
+
+Before reading-order sorting and schema assembly, every page's raw block list (text + table + figure) passes through a dedicated post-processing stage (`worker/pipeline/postprocess.py`):
+
+- **Text cleanup** — Unicode (NFC) and whitespace/control-character hygiene on every text-bearing block. This is hygiene, not correction — it never changes wording.
+- **Duplicate suppression** — the main text pass runs over the whole page independently of table/figure detection, so a table's cell text and a chart's internal labels can also show up as ordinary heading/paragraph blocks. Any such block whose bbox falls substantially inside a table/figure region is dropped: the table's own cell data already has that text with real structure, and chart-internal text is noise DocScribe never promises to extract (see §9.3).
+- **Overlap merge** — a defensive rule that collapses same-type text blocks that heavily overlap and read as near-identical text, independent of the table/figure case above.
+- **Confidence-based review routing** — every surviving block gets a `review_status` from its own confidence: `>= 0.90` → `accepted`, `0.75–0.90` → `flagged`, `< 0.75` → `needs_review`. The `needs_review` boolean is derived from this for every block type; figures additionally keep their own stricter rule (confidence + caption match) on top of it.
+
+### 9.5 Spell-correction policy
 
 - After normalization, each text block passes through automated, offline spell correction — only for tokens where OCR confidence is below a threshold, and only for languages with a loaded dictionary (currently `en`, `hi`, `gu`, `mr`). Numerics and alphanumeric IDs are never touched, protecting invoice numbers, dates, and codes.
 - Every correction is recorded on the block as `spell_corrections: [{original, corrected, edit_distance}]` — an empty list means nothing was changed, not that correction didn't run.
@@ -211,7 +220,9 @@ Every page/document, regardless of which engine produced it, is normalized into 
           "engine_used": "paddleocr | surya",
           "translated_text": null,
           "translated_lang": null,
-          "spell_corrections": []
+          "spell_corrections": [],
+          "review_status": "accepted",
+          "needs_review": false
         },
         {
           "block_id": "p1_b2",
@@ -225,7 +236,9 @@ Every page/document, regardless of which engine produced it, is normalized into 
               {"row": 0, "col": 0, "row_span": 1, "col_span": 1, "text": "Item", "is_header": true, "confidence": 0.95},
               {"row": 0, "col": 1, "row_span": 1, "col_span": 2, "text": "Details", "is_header": true, "confidence": 0.93}
             ]
-          }
+          },
+          "review_status": "flagged",
+          "needs_review": false
         },
         {
           "block_id": "p1_b3",
@@ -236,6 +249,7 @@ Every page/document, regardless of which engine produced it, is normalized into 
           "image_url": "minio://results/doc123/p1_b3.png",
           "caption": "Figure 2: Regional sales breakdown",
           "alt_text": null,
+          "review_status": "flagged",
           "needs_review": true
         }
       ]
@@ -297,10 +311,11 @@ erDiagram
         string image_url
         string caption
         boolean needs_review
+        string review_status
     }
 ```
 
-> `type` distinguishes heading/paragraph/table/list/caption/figure. `table_data`, `image_url`/`caption`/`needs_review`/`subtype` are sparse — populated only for their relevant block type.
+> `type` distinguishes heading/paragraph/table/list/caption/figure. `table_data`, `image_url`/`caption`/`subtype` are sparse — populated only for their relevant block type. `needs_review` and `review_status` are populated for every block type (§9.4).
 
 ---
 

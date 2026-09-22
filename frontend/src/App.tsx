@@ -9,7 +9,7 @@ import { PagePreview } from './components/PagePreview';
 import { ResultViewer } from './components/ResultViewer';
 import { DocumentList } from './components/DocumentList';
 import { api } from './api/client';
-import { Cpu, RotateCcw, AlertTriangle, Layers, Loader2} from 'lucide-react';
+import { RotateCcw, AlertTriangle, Layers, Loader2} from 'lucide-react';
 
 const OCRDashboard: React.FC = () => {
   const { state, setCurrentJob, updateJobStatus, updateOcrResult, setProcessing, resetState } = useAppStore();
@@ -109,9 +109,6 @@ const OCRDashboard: React.FC = () => {
             <div>
               <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
                 DocScribe
-                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                  Pipeline v1
-                </span>
               </h1>
               <p className="text-xs text-slate-400">Multilingual OCR & Layout-Aware Core Pipeline</p>
             </div>
@@ -119,11 +116,6 @@ const OCRDashboard: React.FC = () => {
 
           <div className="flex items-center gap-6">
             <div className="hidden sm:flex items-center gap-4 text-xs">
-              <span className="flex items-center gap-1.5 text-slate-400">
-                <Cpu size={14} className="text-emerald-400" />
-                Hardware: <span className="font-semibold text-slate-200">CPU (GPU Fallback Optional)</span>
-              </span>
-              <span className="w-[1px] h-4 bg-slate-800" />
               <span className="flex items-center gap-1.5 text-slate-400">
                 <Layers size={14} className="text-cyan-400" />
                 Engines: <span className="font-semibold text-slate-200">Paddle + Surya</span>

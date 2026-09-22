@@ -19,6 +19,7 @@ from app.services.storage import storage_service
 from worker.celery_app import celery_app
 from worker.pipeline.engines.structure_engine import StructureEngine, find_caption
 from worker.pipeline.normalize import convert_to_markdown, normalize_to_common_schema
+from worker.pipeline.postprocess import postprocess_page_blocks
 from worker.pipeline.preprocess import preprocess_page, rasterize_pdf_page
 from worker.pipeline.router import EngineRouter
 
@@ -199,7 +200,13 @@ def _process_single_page(
             "Page %d: %d table block(s), %d figure/chart block(s)",
             page_number, len(table_blocks), len(figure_blocks),
         )
-        return blocks + table_blocks + figure_blocks
+
+        # Post-processing (text cleanup, duplicate/overlap suppression,
+        # confidence-based review routing) — see postprocess.py. Runs on
+        # the full combined list so it can tell which plain-text blocks
+        # fall inside a table/figure region and should be dropped as
+        # duplicates rather than kept as independent content.
+        return postprocess_page_blocks(blocks + table_blocks + figure_blocks)
     except Exception as exc:
         logger.error(
             "Page %d processing failed: %s",
@@ -217,6 +224,8 @@ def _process_single_page(
                 "language": "und",
                 "type": "paragraph",
                 "engine_used": "error",
+                "review_status": "needs_review",
+                "needs_review": True,
             }
         ]
 
@@ -287,7 +296,8 @@ def _persist_pages_and_blocks(
                 table_data=block_data.get("table") if block_type == "table" else None,
                 image_url=block_data.get("image_url") if block_type == "figure" else None,
                 caption=block_data.get("caption") if block_type == "figure" else None,
-                needs_review=block_data.get("needs_review") if block_type == "figure" else None,
+                needs_review=block_data.get("needs_review"),
+                review_status=block_data.get("review_status"),
             )
             db.add(block_row)
 

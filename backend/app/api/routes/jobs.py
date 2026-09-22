@@ -232,6 +232,7 @@ def get_page_result(
             "image_url": b.image_url,
             "caption": b.caption,
             "needs_review": b.needs_review,
+            "review_status": b.review_status,
         }
         for idx, b in enumerate(block_rows)
     ]
