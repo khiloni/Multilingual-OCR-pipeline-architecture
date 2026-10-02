@@ -2,17 +2,28 @@
 // Future TODOs: Render interactive Markdown nodes, support syntax highlighting for JSON, and add download as file buttons.
 
 import React, { useState } from 'react';
-import { CommonOutputSchema } from '../api/client';
-import { FileCode, FileJson, Copy, Check, Download } from 'lucide-react';
+import { CommonOutputSchema, api } from '../api/client';
+import { FileCode, FileJson, Copy, Check, Download, Loader2 } from 'lucide-react';
 
 interface ResultViewerProps {
   result: CommonOutputSchema;
   markdownContent: string;
+  txtContent: string;
+  jobId: string;
 }
 
-export const ResultViewer: React.FC<ResultViewerProps> = ({ result, markdownContent }) => {
+type PdfVariant = 'searchable' | 'highlighted' | 'structured';
+
+const PDF_DOWNLOADERS: Record<PdfVariant, (jobId: string) => Promise<Blob>> = {
+  searchable: api.downloadSearchablePdf,
+  highlighted: api.downloadHighlightedPdf,
+  structured: api.downloadStructuredPdf,
+};
+
+export const ResultViewer: React.FC<ResultViewerProps> = ({ result, markdownContent, txtContent, jobId }) => {
   const [activeTab, setActiveTab] = useState<'markdown' | 'json'>('markdown');
   const [copied, setCopied] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState<PdfVariant | null>(null);
 
   const handleCopy = () => {
     const textToCopy = activeTab === 'markdown' 
@@ -38,6 +49,26 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ result, markdownCont
 
   const handleDownloadJson = () => downloadFile(JSON.stringify(result, null, 2), 'json');
   const handleDownloadMarkdown = () => downloadFile(markdownContent, 'md');
+  const handleDownloadTxt = () => downloadFile(txtContent, 'txt');
+
+  const handleDownloadPdfVariant = async (variant: PdfVariant) => {
+    setDownloadingPdf(variant);
+    try {
+      const blob = await PDF_DOWNLOADERS[variant](jobId);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `${variant}_result.pdf`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(`Failed to download ${variant} PDF:`, err);
+    } finally {
+      setDownloadingPdf(null);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full space-y-4">
@@ -92,6 +123,41 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({ result, markdownCont
           >
             <Download size={14} />
             Markdown
+          </button>
+          <button
+            onClick={handleDownloadTxt}
+            title="Download TXT"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700 transition-all duration-200 text-xs font-semibold"
+          >
+            <Download size={14} />
+            TXT
+          </button>
+          <button
+            onClick={() => handleDownloadPdfVariant('searchable')}
+            disabled={downloadingPdf !== null}
+            title="Download Searchable PDF"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700 transition-all duration-200 text-xs font-semibold disabled:opacity-50"
+          >
+            {downloadingPdf === 'searchable' ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+            Searchable PDF
+          </button>
+          <button
+            onClick={() => handleDownloadPdfVariant('highlighted')}
+            disabled={downloadingPdf !== null}
+            title="Download Language-Highlighted PDF"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700 transition-all duration-200 text-xs font-semibold disabled:opacity-50"
+          >
+            {downloadingPdf === 'highlighted' ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+            Highlighted PDF
+          </button>
+          <button
+            onClick={() => handleDownloadPdfVariant('structured')}
+            disabled={downloadingPdf !== null}
+            title="Download Structured Reconstruction PDF"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700 transition-all duration-200 text-xs font-semibold disabled:opacity-50"
+          >
+            {downloadingPdf === 'structured' ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+            Structured PDF
           </button>
         </div>
       </div>

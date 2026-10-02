@@ -1,0 +1,100 @@
+images/en_0000.png	en	Invoice Number 48213
+images/en_0001.png	en	Total Amount Due 1024.50
+images/en_0002.png	en	Payment Terms Net 30 Days
+images/en_0003.png	en	Shipping Address London
+images/en_0004.png	en	Customer Name John Smith
+images/en_0005.png	en	Order Date 12 March 2026
+images/en_0006.png	en	Quantity Ordered 150 Units
+images/en_0007.png	en	Discount Applied 10 Percent
+images/en_0008.png	en	Subtotal Before Tax 920.00
+images/en_0009.png	en	Tax Rate 8 Percent Applied
+images/en_0010.png	en	Grand Total 1012.50 USD
+images/en_0011.png	en	Delivery Method Express Courier
+images/en_0012.png	en	Warehouse Location Mumbai India
+images/en_0013.png	en	Product Code SKU 77412
+images/en_0014.png	en	Return Policy 30 Days
+images/en_0015.png	en	Contact Email support@example.com
+images/en_0016.png	en	Phone Number 9876543210
+images/en_0017.png	en	Account Balance 450.75
+images/en_0018.png	en	Reference Number REF2026031
+images/en_0019.png	en	Billing Cycle Monthly Plan
+images/en_0020.png	en	Signature Required Yes
+images/en_0021.png	en	Vendor Name Acme Corporation
+images/en_0022.png	en	Purchase Order PO99231
+images/en_0023.png	en	Currency United States Dollar
+images/en_0024.png	en	Status Pending Approval
+images/hi_0000.png	hi	नमस्ते भारत
+images/hi_0001.png	hi	कुल राशि चालान
+images/hi_0002.png	hi	धन्यवाद आभार
+images/hi_0003.png	hi	संख्या और तारीख
+images/hi_0004.png	hi	ग्राहक का नाम राज
+images/hi_0005.png	hi	कृपया भुगतान करें
+images/hi_0006.png	hi	वस्तु की मात्रा दस
+images/hi_0007.png	hi	दिनांक पंद्रह मार्च
+images/hi_0008.png	hi	कुल योग पांच सौ
+images/hi_0009.png	hi	बैंक खाता संख्या
+images/hi_0010.png	hi	पता शहर मुंबई
+images/hi_0011.png	hi	फोन नंबर सही है
+images/hi_0012.png	hi	ईमेल पता लिखें
+images/hi_0013.png	hi	उत्पाद कोड चार सात
+images/hi_0014.png	hi	वापसी नीति तीस दिन
+images/hi_0015.png	hi	छूट दस प्रतिशत लागू
+images/hi_0016.png	hi	कर की दर आठ
+images/hi_0017.png	hi	वितरण विधि तेज़
+images/hi_0018.png	hi	गोदाम स्थान दिल्ली
+images/hi_0019.png	hi	खाता शेष राशि
+images/hi_0020.png	hi	संदर्भ संख्या लिखें
+images/hi_0021.png	hi	मासिक योजना चुनें
+images/hi_0022.png	hi	हस्ताक्षर आवश्यक है
+images/hi_0023.png	hi	आपूर्तिकर्ता नाम शर्मा
+images/hi_0024.png	hi	स्थिति लंबित है
+images/mr_0000.png	mr	नमस्कार महाराष्ट्र
+images/mr_0001.png	mr	एकूण रक्कम दिनांक
+images/mr_0002.png	mr	धन्यवाद आपले
+images/mr_0003.png	mr	पावती क्रमांक
+images/mr_0004.png	mr	ग्राहकाचे नाव सुरेश
+images/mr_0005.png	mr	कृपया पैसे भरा
+images/mr_0006.png	mr	वस्तूंची संख्या पाच
+images/mr_0007.png	mr	तारीख वीस मार्च
+images/mr_0008.png	mr	एकूण बेरीज सहाशे
+images/mr_0009.png	mr	बँक खाते क्रमांक
+images/mr_0010.png	mr	पत्ता शहर पुणे
+images/mr_0011.png	mr	फोन नंबर बरोबर
+images/mr_0012.png	mr	ईमेल पत्ता लिहा
+images/mr_0013.png	mr	उत्पादन कोड आठ नऊ
+images/mr_0014.png	mr	परतावा धोरण तीस
+images/mr_0015.png	mr	सूट पंधरा टक्के
+images/mr_0016.png	mr	कराचा दर सात
+images/mr_0017.png	mr	वितरण पद्धत जलद
+images/mr_0018.png	mr	गोदाम स्थान नागपूर
+images/mr_0019.png	mr	खाते शिल्लक रक्कम
+images/mr_0020.png	mr	संदर्भ क्रमांक लिहा
+images/mr_0021.png	mr	मासिक योजना निवडा
+images/mr_0022.png	mr	स्वाक्षरी आवश्यक आहे
+images/mr_0023.png	mr	पुरवठादार नाव पाटील
+images/mr_0024.png	mr	स्थिती प्रलंबित आहे
+images/gu_0000.png	gu	નમસ્તે ગુજરાત
+images/gu_0001.png	gu	કુલ રકમ તારીખ
+images/gu_0002.png	gu	આભાર તમારો
+images/gu_0003.png	gu	ચલણ નંબર
+images/gu_0004.png	gu	ગ્રાહકનું નામ પટેલ
+images/gu_0005.png	gu	કૃપા કરી ચુકવણી કરો
+images/gu_0006.png	gu	વસ્તુઓની સંખ્યા પાંચ
+images/gu_0007.png	gu	તારીખ વીસ માર્ચ
+images/gu_0008.png	gu	કુલ સરવાળો છસો
+images/gu_0009.png	gu	બેંક ખાતા નંબર
+images/gu_0010.png	gu	સરનામું શહેર સુરત
+images/gu_0011.png	gu	ફોન નંબર સાચો છે
+images/gu_0012.png	gu	ઈમેલ સરનામું લખો
+images/gu_0013.png	gu	ઉત્પાદન કોડ આઠ નવ
+images/gu_0014.png	gu	વળતર નીતિ ત્રીસ દિવસ
+images/gu_0015.png	gu	છૂટ પંદર ટકા
+images/gu_0016.png	gu	કરનો દર સાત
+images/gu_0017.png	gu	વિતરણ પદ્ધતિ ઝડપી
+images/gu_0018.png	gu	ગોદામ સ્થાન રાજકોટ
+images/gu_0019.png	gu	ખાતાની બાકી રકમ
+images/gu_0020.png	gu	સંદર્ભ નંબર લખો
+images/gu_0021.png	gu	માસિક યોજના પસંદ કરો
+images/gu_0022.png	gu	સહી જરૂરી છે
+images/gu_0023.png	gu	સપ્લાયરનું નામ શાહ
+images/gu_0024.png	gu	સ્થિતિ બાકી છે

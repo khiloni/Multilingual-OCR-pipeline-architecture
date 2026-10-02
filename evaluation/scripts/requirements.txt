@@ -1,0 +1,6 @@
+# Dependencies for running run_e2e_test.py and run_benchmark.py against a
+# live docker-compose stack. Not needed by the API/worker images themselves
+# (backend/requirements-*.txt).
+pytest>=7.4.0
+requests>=2.31.0
+pymupdf>=1.22.0

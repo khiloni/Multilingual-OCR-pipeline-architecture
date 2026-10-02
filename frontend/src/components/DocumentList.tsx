@@ -190,6 +190,9 @@ export const DocumentList: React.FC<DocumentListProps> = ({ onViewDocument, refr
                   {isDone && doc.avg_confidence != null && (
                     <> · {(doc.avg_confidence * 100).toFixed(1)}% confidence</>
                   )}
+                  {isDone && doc.avg_quality_score != null && (
+                    <> · {(doc.avg_quality_score * 100).toFixed(1)}% quality</>
+                  )}
                 </p>
                 {status === 'failed' && doc.error_message && (
                   <p className="text-xs text-rose-400 mt-1 flex items-center gap-1 truncate">

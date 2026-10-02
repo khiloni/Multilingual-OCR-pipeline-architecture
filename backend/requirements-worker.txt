@@ -41,5 +41,14 @@ surya-ocr==0.17.1
 # surya-ocr 0.17.1 requires transformers <5.0.0.
 transformers>=4.37.0,<5.0.0
 
-# Automated post-OCR spell correction (SymSpell, per-language dictionaries)
+# Automated post-OCR spell correction (SymSpell, per-language dictionaries).
+# No longer the default correction path (see CORRECTION_PROVIDER in
+# config.py / ARCHITECTURE.md §9.5) — kept only for the CORRECTION_PROVIDER=
+# legacy_symspell fallback in normalize.py.
 symspellpy>=6.7.7
+
+# API-based OCR/spell correction (worker/pipeline/correction.py) — OFF by
+# default (CORRECTION_PROVIDER=none); anthropic / openai / gemini when enabled.
+anthropic>=0.40.0
+openai>=1.50.0
+google-genai>=0.3.0

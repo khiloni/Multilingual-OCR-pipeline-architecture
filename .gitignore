@@ -83,6 +83,12 @@ logs/
 .claude/
 
 # =========================
+# Archive — superseded docs, old scratch files, old model versions/training
+# outputs. Never purged automatically; kept locally, not tracked in git.
+# =========================
+archive/
+
+# =========================
 # ML model artifacts
 # =========================
 # Training checkpoints and intermediate exports (.pdparams/.pdopt, raw

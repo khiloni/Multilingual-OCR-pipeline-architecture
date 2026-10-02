@@ -7,7 +7,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import documents, jobs, webhooks
+from app.api.routes import documents, jobs, search, webhooks
 from app.core.config import settings
 from app.core.db import check_db_health
 from app.services.storage import storage_service
@@ -45,6 +45,7 @@ app.add_middleware(
 
 app.include_router(jobs.router, prefix="/api/v1")
 app.include_router(documents.router, prefix="/api/v1")
+app.include_router(search.router, prefix="/api/v1")
 app.include_router(webhooks.router, prefix="/api/v1")
 
 

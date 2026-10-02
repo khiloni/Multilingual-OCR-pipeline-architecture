@@ -151,16 +151,22 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     Start([Page Image Ready]) --> Run[Run PaddleOCR]
-    Run --> Score{Confidence >= threshold\nAND no script outside the\nprimary model's languages?}
-    Score -->|Yes| Accept[Accept PaddleOCR output]
-    Score -->|No| Fallback[Run Surya: detection + recognition]
+    Run --> Score{Confidence >= threshold\nAND quality_score >= threshold\nAND no table AND no mixed script?}
+    Score -->|No, and retry enabled| Variant[Retry SAME engine on\nCLAHE-enhanced / adaptive-threshold\nimage variants, keep best]
+    Variant --> Score2{Best variant clears\nboth thresholds?}
+    Score2 -->|Yes| Accept[Accept PaddleOCR output]
+    Score2 -->|No| Fallback[Run Surya: detection + recognition]
+    Score -->|Yes| Accept
     Fallback --> Merge[Merge best-of-both by block overlap:\nSurya's bboxes are kept for its regions,\nPaddle only wins individual blocks\nwith higher confidence]
     Accept --> Structure[Detect tables / figures]
     Merge --> Structure
     Structure --> Normalize[Normalize to common schema]
-    Normalize --> Spell[Automated spell correction:\nlow-confidence tokens only, en/hi/gu/mr]
-    Spell --> Output([Structured Block:\ntext, bbox, lang, confidence, type,\nspell_corrections audit log])
+    Normalize --> Correct[API-based correction:\nbatched per page, en/hi/gu/mr]
+    Correct --> Quality[Compute final per-page\nquality_score — §9.6]
+    Quality --> Output([Structured Block:\ntext, bbox, lang, confidence, type,\noriginal_text/corrected_text audit trail])
 ```
+
+Every page records which attempt produced its accepted output: `ocr_attempt` is one of `original | enhanced | threshold | surya`, persisted on the `pages` row (§10) and exposed via `GET /jobs/{id}/pages/{n}`.
 
 ---
 
@@ -195,10 +201,56 @@ Before reading-order sorting and schema assembly, every page's raw block list (t
 - **Overlap merge** — a defensive rule that collapses same-type text blocks that heavily overlap and read as near-identical text, independent of the table/figure case above.
 - **Confidence-based review routing** — every surviving block gets a `review_status` from its own confidence: `>= 0.90` → `accepted`, `0.75–0.90` → `flagged`, `< 0.75` → `needs_review`. The `needs_review` boolean is derived from this for every block type; figures additionally keep their own stricter rule (confidence + caption match) on top of it.
 
-### 9.5 Spell-correction policy
+### 9.5 Post-OCR correction policy
 
-- After normalization, each text block passes through automated, offline spell correction — only for tokens where OCR confidence is below a threshold, and only for languages with a loaded dictionary (currently `en`, `hi`, `gu`, `mr`). Numerics and alphanumeric IDs are never touched, protecting invoice numbers, dates, and codes.
-- Every correction is recorded on the block as `spell_corrections: [{original, corrected, edit_distance}]` — an empty list means nothing was changed, not that correction didn't run.
+- After normalization, each page's text blocks are corrected via a configurable LLM provider (`worker/pipeline/correction.py`) — **one batched API call per page** (block id + text + language), not per word/block. Replaces an earlier offline SymSpell approach, which had unreliable gu/mr dictionaries; SymSpell remains available behind `CORRECTION_PROVIDER=legacy_symspell` for comparison only.
+- Provider + model + timeout/retry budget are set via `CORRECTION_PROVIDER` (`anthropic` | `openai` | `gemini` | `legacy_symspell` | `none`, defaults to `none` — correction is opt-in), `CORRECTION_API_KEY` (env/`.env` only, never committed), `CORRECTION_MODEL`, `CORRECTION_TIMEOUT_SECONDS`, `CORRECTION_MAX_RETRIES` (`backend/app/core/config.py`).
+- **Strict system prompt**: fix OCR/spelling errors only — never translate, never change script/language, preserve numbers/dates/names/codes/punctuation/line structure, no added or removed content. Response must be JSON keyed by the same block ids, nothing else.
+- **Skip rules**: table cells and figure blocks are never sent for correction (`_SKIP_CORRECTION_TYPES`); blocks at/above `CORRECTION_SKIP_CONFIDENCE` (default 0.98) are left alone.
+- **Safety rails**: the response is validated (same block ids present, valid JSON, same script as the input) — any mismatch falls back to the raw OCR text for that block. A correction whose normalized edit distance exceeds `CORRECTION_MAX_EDIT_DISTANCE_RATIO` (default 0.30) is rejected as a rewrite rather than a spell-fix, keeping the raw text instead.
+- **Never crashes the pipeline**: any API failure, timeout, rate-limit, or malformed response is caught, logged as a warning, and the page proceeds with raw OCR text — `correct_page_blocks()` always returns a result parallel to its input and never raises.
+- Cached in-process by `hash(text, language)`; retried with backoff up to `CORRECTION_MAX_RETRIES`.
+- Each block stores `original_text`, `corrected_text` (= `text`), and `correction_applied: bool` — review gating no longer applies to a text block once correction has run on it (`needs_review` is forced `false` when `correction_applied` is true).
+- **Privacy**: when an external provider is enabled, OCR'd document text is sent to that provider's API. See README "Privacy" note before enabling for sensitive documents.
+
+### 9.6 OCR quality score
+
+Confidence alone only reflects the OCR engine's self-reported certainty — it says nothing about whether the output is actually usable (garbled characters, a page mostly uncovered by any block, inconsistent language detection can all hide behind a "confident" score). `worker/pipeline/quality.py` computes an explicit, auditable 0–1 score per page from five weighted components:
+
+| Component | Weight (default) | What it measures |
+|---|---|---|
+| `confidence` | 0.35 | Average OCR engine confidence across the page's text blocks |
+| `text_quality` | 0.25 | Share of text blocks the correction step left unchanged (a high share means the raw OCR text was already clean) |
+| `character_quality` | 0.15 | Share of characters matching the block's expected script (per `language`) or common punctuation/digits/whitespace — penalizes junk symbols |
+| `page_coverage` | 0.15 | Share of page area covered by block bounding boxes (summed, capped at 1.0 — not a true union) |
+| `language_consistency` | 0.10 | Share of text blocks matching the page's dominant detected language |
+
+Weights are configurable (`QUALITY_WEIGHT_*` in `config.py`, sum to 1.0) and the score is computed **twice**, at different points with different signal availability:
+
+1. **Early gate** (`router.py`, inside `EngineRouter.process_page()`) — computed on raw PaddleOCR text blocks only, before correction or structure detection have run. `text_quality` is neutral here (no `correction_applied` signal yet) and `page_coverage` only sees text blocks (tables/figures not yet detected). Used alongside `avg_confidence` to decide whether to retry on image variants / fall back to Surya: a page can clear the confidence threshold and still be retried if `quality_score < QUALITY_SCORE_THRESHOLD` (default 0.70).
+2. **Final score** (`tasks.py`, after normalization) — computed on the complete page (corrected text + tables + figures), stored as the authoritative value.
+
+Stored per page (`pages.quality_score`) and aggregated per document (`jobs.avg_quality_score`, mean across pages) — exposed via `GET /jobs/{id}`, `GET /jobs/{id}/pages/{n}`, and `GET /documents`, and shown in the frontend document list.
+
+### 9.7 Full-text search
+
+`pages.search_text` holds every block's text on that page, concatenated at persist time (`tasks._persist_pages_and_blocks()`); `pages.search_vector` is a `GENERATED ALWAYS AS (to_tsvector('simple', ...)) STORED` column over it, backed by a GIN index (`idx_pages_search_vector`). `GET /api/v1/search?q=` queries it directly with `plainto_tsquery` + `ts_rank` + `ts_headline`, no application-level indexing service.
+
+**Known limitation**: Postgres's `simple` text-search configuration does no stemming or stopword removal for *any* language — tokenization only. No Postgres built-in configuration supports Devanagari or Gujarati linguistically, so this applies uniformly; search behaves as token matching, not as a linguistically-aware search (an inflected word form won't automatically match its root).
+
+**Snippet rendering**: `ts_headline()` wraps matched terms in the surrounding (untrusted — it's OCR'd document text) snippet. The API uses non-HTML delimiters (`StartSel`/`StopSel` set to `\x01`/`\x02`) rather than `<b>` tags, and the frontend splits on them and renders each segment as plain text + a React element — never `dangerouslySetInnerHTML` — so a document containing literal markup in its OCR'd text can't inject into the search results page.
+
+### 9.8 Derived PDF exports
+
+Three PDF variants are generated per job (`worker/pipeline/export_pdf.py`) alongside JSON/Markdown/TXT, each serving a different purpose:
+
+| Variant | Background | Text layer | Use case |
+|---|---|---|---|
+| `searchable_pdf` | Original rasterized page image | Invisible (render mode 3), positioned per block bbox | Looks identical to the scan, but searchable/selectable |
+| `highlighted_pdf` | Original rasterized page image | Invisible, plus a semi-transparent color rectangle per block keyed to `language`, with a legend | Visual QA of language detection on multilingual pages |
+| `structured_pdf` | None (blank page) | Visible, redrawn at each block's position; tables redrawn as a real grid; figures re-embedded from their MinIO crop | A clean reconstruction when the original scan is poor but the extracted structure is good |
+
+All three reuse the same bundled Unicode fonts (`worker/pipeline/fonts/` — Noto Sans / Noto Sans Devanagari / Noto Sans Gujarati) keyed off each block's `language`, matching `_PRIMARY_MODEL_SCRIPTS`. PyMuPDF's `insert_font()` rejects fontnames containing spaces, so each font file is given a fixed sanitized alias (`notosans-deva`/`notosans-gujr`/`notosans-latn`) rather than using `pymupdf.Font(...).name` directly.
 
 ```json
 {
@@ -209,18 +261,22 @@ Before reading-order sorting and schema assembly, every page's raw block list (t
     {
       "page_number": 1,
       "language_detected": ["en", "hi"],
+      "ocr_attempt": "original | enhanced | threshold | surya",
+      "quality_score": 0.91,
       "blocks": [
         {
           "block_id": "p1_b1",
           "type": "heading | paragraph | table | list | caption | figure",
           "text": "Extracted text content",
+          "original_text": "Extracted text content (raw OCR)",
+          "corrected_text": "Extracted text content",
+          "correction_applied": false,
           "bbox": [x0, y0, x1, y1],
           "confidence": 0.97,
           "language": "en",
           "engine_used": "paddleocr | surya",
           "translated_text": null,
           "translated_lang": null,
-          "spell_corrections": [],
           "review_status": "accepted",
           "needs_review": false
         },
@@ -287,6 +343,7 @@ erDiagram
         uuid document_id FK
         string status
         float avg_confidence
+        float avg_quality_score
         text error_message
         timestamp started_at
         timestamp completed_at
@@ -296,6 +353,10 @@ erDiagram
         uuid job_id FK
         int page_number
         string languages_detected
+        string ocr_attempt
+        float quality_score
+        text search_text
+        tsvector search_vector "generated, GIN-indexed"
     }
     BLOCKS {
         uuid id PK
@@ -303,6 +364,8 @@ erDiagram
         string type
         string subtype
         text content
+        text original_text
+        boolean correction_applied
         json bbox
         float confidence
         string language
@@ -315,7 +378,7 @@ erDiagram
     }
 ```
 
-> `type` distinguishes heading/paragraph/table/list/caption/figure. `table_data`, `image_url`/`caption`/`subtype` are sparse — populated only for their relevant block type. `needs_review` and `review_status` are populated for every block type (§9.4).
+> `type` distinguishes heading/paragraph/table/list/caption/figure. `table_data`, `image_url`/`caption`/`subtype` are sparse — populated only for their relevant block type. `needs_review` and `review_status` are populated for every block type (§9.4). `content` holds the corrected text (`original_text` holds the pre-correction raw OCR text — see §9.5). `ocr_attempt` and `quality_score` are documented in §8 and §9.6 respectively.
 
 ---
 
@@ -325,11 +388,12 @@ erDiagram
 |---|---|---|
 | `POST` | `/api/v1/jobs` | Upload PDF, create job, returns `job_id` |
 | `GET` | `/api/v1/jobs/{job_id}` | Poll job status (`queued`, `processing`, `done`, `failed`) |
-| `GET` | `/api/v1/jobs/{job_id}/result?format=json\|markdown` | Fetch structured output |
+| `GET` | `/api/v1/jobs/{job_id}/result?format=json\|markdown\|txt\|searchable_pdf\|highlighted_pdf\|structured_pdf` | Fetch structured output or a derived export |
 | `GET` | `/api/v1/jobs/{job_id}/pages/{n}` | Fetch single-page result (with preview image) |
 | `POST` | `/api/v1/jobs/{job_id}/reprocess` | Re-run OCR for a document |
 | `GET` | `/api/v1/documents` | List uploaded documents (paginated), with latest job status |
 | `DELETE` | `/api/v1/documents/{id}` | Remove document, jobs, and stored files |
+| `GET` | `/api/v1/search?q=` | Full-text search across OCR'd page content (§9.7) |
 
 ---
 
@@ -358,6 +422,8 @@ flowchart TB
 
 The `backend` (API) and `worker` (Celery) services build from the same source tree but install different dependency sets — the API never loads the ML stack, keeping that image small.
 
+Both services load `env_file: .env` in `docker-compose.yml`, then layer a handful of container-networking overrides on top (`POSTGRES_HOST=postgres` etc. — `.env`'s own values are for host-side, non-Docker runs and resolve to the wrong hostname inside the Docker network). Any setting not in that explicit override list — `CORRECTION_API_KEY`, `CORRECTION_PROVIDER`, `QUALITY_WEIGHT_*`, etc. — comes from `.env` through `env_file` and needs nothing hardcoded in the compose file to reach the container. Changing `.env` only takes effect after the container is recreated (`docker compose up -d <service>`), not a plain `restart`.
+
 ---
 
 ## 13. Repository Structure
@@ -367,15 +433,16 @@ ocr-pipeline/
 ├── ARCHITECTURE.md
 ├── README.md
 ├── docker-compose.yml
+├── .env.example
 ├── frontend/
 │   └── src/
-│       ├── components/          # UploadForm, JobStatus, PagePreview, ResultViewer, DocumentList
+│       ├── components/          # UploadForm, JobStatus, PagePreview, ResultViewer, DocumentList, SearchBox
 │       ├── api/                 # API client
 │       └── store/                # state management
 ├── backend/
 │   ├── app/
 │   │   ├── main.py               # FastAPI entrypoint
-│   │   ├── api/routes/           # jobs.py, documents.py
+│   │   ├── api/routes/           # jobs.py, documents.py, search.py
 │   │   ├── models/               # SQLAlchemy models
 │   │   ├── schemas/              # Pydantic schemas
 │   │   ├── services/             # storage.py, queue.py
@@ -383,18 +450,27 @@ ocr-pipeline/
 │   ├── worker/
 │   │   ├── tasks.py               # Celery task definitions
 │   │   ├── pipeline/
-│   │   │   ├── preprocess.py      # deskew, denoise
+│   │   │   ├── preprocess.py      # rasterize, deskew, denoise, CLAHE/threshold variants
 │   │   │   ├── engines/           # paddle_engine.py, surya_engine.py, structure_engine.py
-│   │   │   ├── router.py          # engine selection logic (Section 8)
-│   │   │   ├── normalize.py       # common schema output
-│   │   │   ├── spellcheck.py      # offline spell correction
-│   │   │   └── dictionaries/      # per-language frequency dictionaries
+│   │   │   ├── router.py          # engine selection + image-variant retry + quality gate (Section 8)
+│   │   │   ├── postprocess.py     # dedup, review routing
+│   │   │   ├── normalize.py       # common schema, Markdown/TXT export
+│   │   │   ├── correction.py      # API-based post-OCR correction (anthropic/openai/gemini)
+│   │   │   ├── quality.py         # OCR quality score (Section 9.6)
+│   │   │   ├── export_pdf.py      # searchable/highlighted/structured PDF generation
+│   │   │   ├── spellcheck.py      # legacy offline correction (CORRECTION_PROVIDER=legacy_symspell only)
+│   │   │   ├── fonts/             # bundled Unicode fonts for PDF export
+│   │   │   └── dictionaries/      # per-language frequency dictionaries (legacy_symspell)
 │   │   └── celery_app.py
 │   ├── requirements-common.txt    # shared deps (API + worker)
 │   ├── requirements-api.txt       # API-only deps, no ML stack
 │   └── requirements-worker.txt    # worker-only deps
 ├── model/
-│   └── paddle/inference/rec_finetuned/   # fine-tuned recognition model — see README
+│   └── paddle/inference/rec_finetuned/   # deployed fine-tuned recognition model — see README
+├── evaluation/
+│   ├── recognition/               # synthetic validation images + comparison.csv + summary.csv
+│   ├── real_pdf/                  # input/ (real PDFs) and outputs/ (every export format)
+│   └── scripts/                   # run_benchmark.py, run_e2e_test.py
 └── infra/
     └── postgres/
 ```

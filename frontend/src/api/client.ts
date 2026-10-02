@@ -27,6 +27,7 @@ export interface JobStatusResponse {
   document_id: string;
   status: 'queued' | 'processing' | 'done' | 'failed';
   avg_confidence: number | null;
+  avg_quality_score: number | null;
   error_message: string | null;
   started_at: string;
   completed_at: string | null;
@@ -78,6 +79,15 @@ export interface CommonOutputSchema {
   metadata: DocumentMetadata;
 }
 
+export interface SearchResult {
+  document_id: string;
+  filename: string;
+  job_id: string;
+  page_number: number;
+  snippet: string;
+  rank: number;
+}
+
 export interface DocumentListResponse {
   id: string;
   filename: string;
@@ -87,6 +97,7 @@ export interface DocumentListResponse {
   latest_job_id: string | null;
   latest_status: 'queued' | 'processing' | 'done' | 'failed' | null;
   avg_confidence: number | null;
+  avg_quality_score: number | null;
   error_message: string | null;
 }
 
@@ -127,6 +138,42 @@ export const api = {
   getJobResultMarkdown: async (jobId: string): Promise<{ markdown: string }> => {
     const response = await apiClient.get<{ markdown: string }>(`/jobs/${jobId}/result`, {
       params: { format: 'markdown' },
+    });
+    return response.data;
+  },
+
+  getJobResultTxt: async (jobId: string): Promise<{ txt: string }> => {
+    const response = await apiClient.get<{ txt: string }>(`/jobs/${jobId}/result`, {
+      params: { format: 'txt' },
+    });
+    return response.data;
+  },
+
+  searchPages: async (q: string): Promise<SearchResult[]> => {
+    const response = await apiClient.get<SearchResult[]>('/search', { params: { q } });
+    return response.data;
+  },
+
+  downloadSearchablePdf: async (jobId: string): Promise<Blob> => {
+    const response = await apiClient.get(`/jobs/${jobId}/result`, {
+      params: { format: 'searchable_pdf' },
+      responseType: 'blob',
+    });
+    return response.data;
+  },
+
+  downloadHighlightedPdf: async (jobId: string): Promise<Blob> => {
+    const response = await apiClient.get(`/jobs/${jobId}/result`, {
+      params: { format: 'highlighted_pdf' },
+      responseType: 'blob',
+    });
+    return response.data;
+  },
+
+  downloadStructuredPdf: async (jobId: string): Promise<Blob> => {
+    const response = await apiClient.get(`/jobs/${jobId}/result`, {
+      params: { format: 'structured_pdf' },
+      responseType: 'blob',
     });
     return response.data;
   },

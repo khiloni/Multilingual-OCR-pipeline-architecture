@@ -1,0 +1,160 @@
+<!-- Page 1 -->
+
+# Annexure -2
+
+Wor ncvw studcnts cnrollcd in thc acadcmnic vcar 226G-27
+
+Sanlc ccttificatc to bc broult in hc lnstitutionis lctlcrhcad to ct bcntfitof
+
+# NMluvananri Yva Saalamnn Yonna.
+
+# Sr.n0:
+
+# )atc:
+
+# Cctiiscatc
+
+# This is to ccrtily thlt r/NMs
+
+# Enrollment
+
+# No.
+
+# is studying in
+
+# coursc of our institutc in Diplorma
+
+Dcngec D in thc academc eat 2O26-em Chroem hc Ccntrl dmissimons
+
+CocmmittcManagement Quota/ Vacant Quota(GovernmntManagemnt in our institute in firs
+
+# ycar. Mr/ NMs.
+
+# has not got admission on the Nl seat
+
+# Hc Chc as paidc d Rs
+
+tuition feces in Scmester l/J//7 or Ycar lZJ/4. Ohur
+
+# lnstitute has
+
+# (Govermmen/ Grant in aid/Cell inance) Hostel acility. Mr/Ms.
+
+# has becn admitted/not admitted in our haoste
+
+He/she aas not applied or/received any other scholarship assistance unoder any other
+
+statelcerntral aovernment schenme. ao action has been taken against serious mischin in accordanc
+
+with the policys rules or moral standards of the educational institution. uring this year/previous
+
+year, i, they get assistance frosm any other schemelcancellationtransfes, ,o other institutions, we
+
+inforn Ka by sending a letter through registered post and on cmail mnvcykcgguigou.in
+
+
+![figure](minio://docscribe-storage/results/f63056d4-b5f1-4ae8-acb8-6eca8cb6f485/p1_b27.png)
+
+# Namnc of organization's head, signature and stamnp
+
+# lmnportant Note:
+
+l.lease mntion the namne o sclolarship scheme scholarship anournte i student is
+
+# gctting scholarship undcr any otlhcr scholarship schcmne.
+
+ईस्ै
+
+# Scanned with OKN Scanner
+
+
+
+<!-- Page 2 -->
+
+# Annexure -1
+
+(પ્રથમ વર્ષે અરજી કરતા વર્ષ ૨૬૨૭માં પ્રવેશ મેળવેલ વિદ્યાર્થી માટે)
+
+# મુખ્યમંત્રી યુવા સ્વાવલંબન યોજના હેઠળ સહાય મેળવવા માટે
+
+# અરજી સાથે સંસ્થાના લેટરપેડ પર જોડવાના પ્રમાણપત્રનો નમૂનો
+
+# તારીખ-
+
+# ક્રમાંક:
+
+# પ્રમાણપત્ર
+
+# આથી પ્રમાણપત્ર આપવામાં આવે છે કે શ્રી/કુ.
+
+# અમગરા ડીપ્થાડીગ્રા ડીપ્લોા ડી-ટથા-ડી
+
+# એનરોલમેન્ટ નંબર
+
+# અભ્યાસક્રમમાં શૈક્ષણિક વર્ષ ૨કમાં કેન્દ્રીય પ્રવેશ સમિતિ
+
+દ્વારા/ મેનેજમેન્ટ ક્વોટામાં/ વેકન્ટ ક્વોટામાં/ સરકાર/ મેનેજમેન્ટ/ સંસ્થા દ્વારા પ્રથમ વર્ષમાં પ્રવેશ મેળવેલ
+
+# એનઆરઆઈ બેઠક પર પ્રવેશ મેળવેલ નથી
+
+# અભ્યાંસ કરે છે. શ્રી/કુ.
+
+વિદ્યાર્થીએ અમારી સંસ્થામાં ચાલુ સેમેસ્ટર / /7 અથવા વર્ષ 1/2//4 માં રૂ
+
+# ટ્યુંશન ફી ભરેલ છે.
+
+# અમારી સંસ્થામાં સેલ્ફ ફાઇનાન્સ/ગ્રાન્ટ ઇન એડ સરકારી
+
+# હોસ્ટેલ છે. જેમાં
+
+# હોસ્ટેલમાં પ્રવેશ મેળવેલ છે/નથી.
+
+# શ્રી/કુ.
+
+તેઓએ અન્ય કોઈપણ યોજના હેઠળ કોઈપણ પ્રકારની શિષ્યવૃત્તિ/ સહાય મેળવવા અરજી કરેલ નથી/ મેળવતા
+
+નથી. તેઓની સામે શૈક્ષણિક સંસ્થાના નીતિ નિયમો અથવા નૈતિક ધોરણો પ્રમાણે ગંભીર ગેરશિસ્ત વિષયક
+
+કોઈપણ કાર્યવાહી કરવામાં આવેલ નથી. આ વર્ષ/ગત વર્ષ દરમિયાન જો તેઓએ અન્ય કોઈ યોજનામાંથી
+
+સહાય મેળવે/ પ્રવેશ રદ કરાવે/ અન્ય સંસ્થામાં ટ્રાન્સફર કરાવે તો કેસીજી, અમદાવાદને પત્ર દ્વારા તેમજ ઈ-
+
+# મેલ my-odu.in પર જાણ કરીશું.
+
+
+![figure](minio://docscribe-storage/results/f63056d4-b5f1-4ae8-acb8-6eca8cb6f485/p2_b26.png)
+
+# સંસ્થાના વડાનું નામ, સહી અને સિક્કો
+
+# ખાસ નોધ:
+
+1. વિદ્યાર્થીએ જો કોઈ અન્ય યોજના હેઠળ સહાય મેળવવા અરજી કરેલ/મેળવતા હોય તો તે યોજનાનું
+
+નામ અને મળનાર/ મળતી સહાયની રકમની વિગત પ્રમાણપત્રમાં દર્શાવવી
+
+# ુઔૈ
+
+# Scanned with OKEN Scanner
+
+
+
+<!-- Page 3 -->
+
+*કેશા અને રિન્યલ રજી રતી વખતે જરર જાતા દસ્તાવેજની નક
+
+
+| Documens lst | Fcor rT ats | Paae nurmber |
+| --- | --- | --- |
+| lCert1licate iron ircttute fos ew st 2Z2 (Gujaratu) | rrre l | 1 |
+| 2Certilcate from irsttute for rew studet 226 27 (Ernglsh) | rrre -2 | ै. |
+| 3. income Certilicate Cormat | Anrure -3) | ै |
+| dseideclarato - MvY 2026 2 7 | rrure -d | વ |
+| S. Renewal certcate (ro instutute (Gaat) | Anrxure -5 |  |
+| 6. Renewal certcate irom Insttute (English) | Anreure 6 |  |
+| 7.Returnina sahav inorrmao | Anrure -.) | 7 |
+| 8. Returninas Sahoay forr | Anrure -8 | ી |
+| 9. Certilicate or sudents whose Lnlvrity ea/esu are late/pending | Anrexur e- 9 |  |
+
+# Scannd with N Sanner
+
+

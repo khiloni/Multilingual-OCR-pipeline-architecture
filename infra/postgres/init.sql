@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
     status VARCHAR(50) NOT NULL DEFAULT 'queued',
     avg_confidence REAL,
+    avg_quality_score REAL,
     error_message TEXT,
     started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     completed_at TIMESTAMP
@@ -29,8 +30,14 @@ CREATE TABLE IF NOT EXISTS pages (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     job_id UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
     page_number INTEGER NOT NULL,
-    languages_detected VARCHAR(255)
+    languages_detected VARCHAR(255),
+    ocr_attempt VARCHAR(20),
+    quality_score REAL,
+    search_text TEXT,
+    search_vector tsvector GENERATED ALWAYS AS (to_tsvector('simple', coalesce(search_text, ''))) STORED
 );
+
+CREATE INDEX IF NOT EXISTS idx_pages_search_vector ON pages USING GIN(search_vector);
 
 -- Create Table: blocks
 CREATE TABLE IF NOT EXISTS blocks (
@@ -50,7 +57,12 @@ CREATE TABLE IF NOT EXISTS blocks (
     needs_review BOOLEAN,
     -- Populated for every block type by the post-processing stage:
     -- "accepted" | "flagged" | "needs_review", from the block's own confidence.
-    review_status VARCHAR(20)
+    review_status VARCHAR(20),
+    -- API-based correction (item 0b). `content` holds the (possibly
+    -- corrected) text; original_text preserves the raw OCR text so both
+    -- are recoverable — content is never overwritten without a trace.
+    original_text TEXT,
+    correction_applied BOOLEAN
 );
 
 -- Indexes for performance queries

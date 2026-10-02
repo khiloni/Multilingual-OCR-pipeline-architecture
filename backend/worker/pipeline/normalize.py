@@ -6,6 +6,8 @@ from typing import List, Dict, Any, Tuple
 from datetime import datetime
 from uuid import UUID
 
+from app.core.config import settings
+from worker.pipeline.correction import correct_page_blocks
 from worker.pipeline.spellcheck import CURRENT_LANGS, correct_block_text
 
 logger = logging.getLogger(__name__)
@@ -83,12 +85,19 @@ def sort_reading_order(blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def normalize_to_common_schema(
     document_id: UUID,
     filename: str,
-    raw_pages: Dict[int, List[Dict[str, Any]]]
+    raw_pages: Dict[int, List[Dict[str, Any]]],
+    page_ocr_attempts: Dict[int, str] = None,
 ) -> Dict[str, Any]:
     """
     Accepts raw extraction outputs per page, sorts block layout, and serializes into standard format.
     Matches Section 10 of ARCHITECTURE.md.
+
+    page_ocr_attempts: optional {page_number: "original"|"enhanced"|
+    "threshold"|"surya"|"error"} from router.EngineRouter.process_page()
+    (Phase 2 item 2) — which image variant/engine the accepted result
+    came from. Defaults to "original" for any page not present.
     """
+    page_ocr_attempts = page_ocr_attempts or {}
     logger.info(f"Normalizing OCR results for document: {document_id}")
     pages_list = []
     all_confidences = []
@@ -96,11 +105,25 @@ def normalize_to_common_schema(
 
     for page_num, raw_blocks in raw_pages.items():
         sorted_blocks = sort_reading_order(raw_blocks)
+
+        # block_id is assigned up front (not inline in the loop below)
+        # because the correction stage needs stable ids to key its
+        # response by, before any per-type branching happens.
+        for idx, block in enumerate(sorted_blocks):
+            block["block_id"] = f"p{page_num}_b{idx + 1}"
+
+        # API-based correction (Phase 2 item 0b) — ONE batched call for
+        # every eligible block on this page. correct_page_blocks() already
+        # skips table/figure blocks and high-confidence text internally,
+        # and never raises (see worker/pipeline/correction.py); result
+        # list is parallel to sorted_blocks, same order, same length.
+        corrections = correct_page_blocks(sorted_blocks)
+
         page_blocks = []
         page_languages = set()
 
-        for idx, block in enumerate(sorted_blocks):
-            block_id = f"p{page_num}_b{idx + 1}"
+        for block, correction in zip(sorted_blocks, corrections):
+            block_id = block["block_id"]
             block_type = block.get("type", "paragraph")
             bbox = block.get("bbox", [0.0, 0.0, 0.0, 0.0])
             confidence = block.get("confidence", 0.0)
@@ -151,43 +174,52 @@ def normalize_to_common_schema(
                 continue
 
             # Text-bearing block types (heading/paragraph/list/caption).
-            text = block.get("text", "")
             lang = block.get("language", "en")
             engine_used = block.get("engine_used", "paddleocr")
 
-            # Automated spell correction (only touches low-confidence tokens,
-            # only for languages we have a fine-tuned model + dictionary for —
-            # see worker/pipeline/spellcheck.py). No per-token OCR confidence
-            # survives the engine layer, so the block's own confidence is used
-            # uniformly across its tokens.
-            spell_corrections = []
-            if text and lang in CURRENT_LANGS:
-                token_confidences = [confidence] * len(text.split())
-                spell_result = correct_block_text(text, lang, token_confidences=token_confidences)
-                text = spell_result.text
-                spell_corrections = [
-                    {
-                        "original": c.original,
-                        "corrected": c.corrected,
-                        "edit_distance": c.edit_distance,
-                    }
-                    for c in spell_result.corrections
-                ]
+            # legacy_symspell: trivial opt-back-in to the old offline path,
+            # kept only for comparison — not the default. See CORRECTION_
+            # PROVIDER in config.py / ARCHITECTURE.md §9.5 for why the API
+            # path replaced it (gu/mr dictionary + lookup_compound() issues).
+            if settings.CORRECTION_PROVIDER == "legacy_symspell":
+                text = block.get("text", "")
+                if text and lang in CURRENT_LANGS:
+                    token_confidences = [confidence] * len(text.split())
+                    spell_result = correct_block_text(text, lang, token_confidences=token_confidences)
+                    text = spell_result.text
+                original_text = block.get("text", "")
+                corrected_text = text
+                correction_applied = corrected_text != original_text
+            else:
+                original_text = correction.original_text
+                corrected_text = correction.corrected_text
+                correction_applied = correction.applied
 
             if lang:
                 page_languages.add(lang)
 
+            # Drop review gating for text once a correction was actually
+            # applied — the point of item 0b is output that needs no human
+            # recheck. If correction wasn't applied (disabled/failed/
+            # skipped), the confidence-tier signal from postprocess.py
+            # still stands.
+            needs_review = block.get("needs_review", review_status == "needs_review")
+            if correction_applied:
+                needs_review = False
+
             page_blocks.append({
                 "block_id": block_id,
                 "type": block_type,
-                "text": text,
+                "text": corrected_text,
+                "original_text": original_text,
+                "corrected_text": corrected_text,
+                "correction_applied": correction_applied,
                 "bbox": bbox,
                 "confidence": confidence,
                 "language": lang,
                 "engine_used": engine_used,
-                "spell_corrections": spell_corrections,
                 "review_status": review_status,
-                "needs_review": block.get("needs_review", review_status == "needs_review"),
+                "needs_review": needs_review,
             })
 
         # Check if page has low confidence blocks
@@ -198,6 +230,7 @@ def normalize_to_common_schema(
         pages_list.append({
             "page_number": page_num,
             "language_detected": list(page_languages),
+            "ocr_attempt": page_ocr_attempts.get(page_num, "original"),
             "blocks": page_blocks
         })
 
@@ -279,3 +312,59 @@ def convert_to_markdown(schema_data: Dict[str, Any]) -> str:
         markdown_lines.append("\n")
 
     return "\n".join(markdown_lines)
+
+
+def _table_to_txt(table: Dict[str, Any]) -> str:
+    """Tab-separated grid export from the structured table.{rows,cols,cells} shape."""
+    rows = table.get("rows", 0)
+    cols = table.get("cols", 0)
+    if rows == 0 or cols == 0:
+        return ""
+
+    grid = [["" for _ in range(cols)] for _ in range(rows)]
+    for cell in table.get("cells", []):
+        r0, c0 = cell.get("row", 0), cell.get("col", 0)
+        row_span = max(1, cell.get("row_span", 1))
+        col_span = max(1, cell.get("col_span", 1))
+        text = (cell.get("text") or "").replace("\t", " ").replace("\n", " ")
+        for r in range(r0, min(r0 + row_span, rows)):
+            for c in range(c0, min(c0 + col_span, cols)):
+                grid[r][c] = text
+
+    return "\n".join("\t".join(row) for row in grid)
+
+
+_TXT_PAGE_MARKER = "=" * 20
+
+
+def convert_to_txt(schema_data: Dict[str, Any]) -> str:
+    """
+    Transforms the unified JSON schema blocks into plain text, page by page,
+    in the same reading order already established by
+    normalize_to_common_schema(). Tables are flattened row-by-row
+    (tab-separated); figures contribute their caption only (no markup, no
+    image reference — plain text has nowhere to put one).
+    """
+    logger.info("Converting normalized JSON schema elements to plain text")
+    lines = []
+
+    for page in schema_data.get("pages", []):
+        lines.append(f"{_TXT_PAGE_MARKER} Page {page['page_number']} {_TXT_PAGE_MARKER}")
+        lines.append("")
+        for block in page.get("blocks", []):
+            b_type = block.get("type")
+
+            if b_type == "table":
+                lines.append(_table_to_txt(block.get("table", {})))
+                lines.append("")
+            elif b_type == "figure":
+                if block.get("caption"):
+                    lines.append(f"[Figure: {block['caption']}]")
+                    lines.append("")
+            else:
+                text = block.get("text", "")
+                if text:
+                    lines.append(text)
+        lines.append("")
+
+    return "\n".join(lines)

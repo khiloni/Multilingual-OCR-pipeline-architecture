@@ -25,6 +25,7 @@ class JobStatusResponse(BaseModel):
     document_id: UUID
     status: Literal["queued", "processing", "done", "failed"]
     avg_confidence: Optional[float] = None
+    avg_quality_score: Optional[float] = None
     error_message: Optional[str] = None
     started_at: datetime
     completed_at: Optional[datetime] = None
@@ -45,6 +46,7 @@ class DocumentListResponse(BaseModel):
     latest_job_id: Optional[UUID] = None
     latest_status: Optional[str] = None
     avg_confidence: Optional[float] = None
+    avg_quality_score: Optional[float] = None
     error_message: Optional[str] = None
 
     class Config:
@@ -89,6 +91,9 @@ class BlockSchema(BaseModel):
     alt_text: Optional[str] = None
     needs_review: Optional[bool] = None
     review_status: Optional[Literal["accepted", "flagged", "needs_review"]] = None
+    original_text: Optional[str] = None
+    corrected_text: Optional[str] = None
+    correction_applied: Optional[bool] = None
 
 class PageSchema(BaseModel):
     """

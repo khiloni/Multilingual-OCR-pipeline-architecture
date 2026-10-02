@@ -10,7 +10,12 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 # Lazy initialization: Construct URL, but create engine without immediate connection tests.
-DATABASE_URL = f"postgresql://{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}@{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}"
+# Driver is explicit (+psycopg2) rather than bare "postgresql://" — SQLAlchemy
+# 2.1's dialect auto-selection prefers psycopg (v3) when resolving a bare
+# scheme, which isn't installed here (requirements pin psycopg2-binary only),
+# and raises ModuleNotFoundError instead of falling back. Being explicit
+# avoids depending on that auto-selection behavior at all.
+DATABASE_URL = f"postgresql+psycopg2://{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}@{settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}"
 
 # Create engine with connect args and pool configuration
 engine = create_engine(

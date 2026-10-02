@@ -12,6 +12,17 @@ import numpy as np
 from app.core.config import settings
 from worker.pipeline.engines.paddle_engine import PaddleOCREngine
 from worker.pipeline.engines.surya_engine import SuryaOCREngine
+from worker.pipeline.preprocess import adaptive_threshold_variant, enhance_contrast_clahe
+from worker.pipeline.quality import compute_page_quality_score
+
+# Image-variant retry (Phase 2 item 2) — tried in this order, same engine,
+# before falling back to Surya. Each entry: (ocr_attempt label, image
+# transform). Capped by settings.IMAGE_VARIANT_MAX_ATTEMPTS so latency
+# stays bounded regardless of how many variants are listed here.
+_IMAGE_VARIANTS: List[Tuple[str, Any]] = [
+    ("enhanced", enhance_contrast_clahe),
+    ("threshold", adaptive_threshold_variant),
+]
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +93,7 @@ class EngineRouter:
     # Public API
     # ------------------------------------------------------------------
 
-    def process_page(self, image: np.ndarray) -> List[Dict[str, Any]]:
+    def process_page(self, image: np.ndarray) -> Tuple[List[Dict[str, Any]], str]:
         """
         Runs the full routing pipeline for a single page image.
 
@@ -90,8 +101,10 @@ class EngineRouter:
             image: Preprocessed BGR np.ndarray (output of preprocess_page()).
 
         Returns:
-            List of normalised block dicts, each containing:
-            text, bbox, confidence, language, type, engine_used.
+            (blocks, ocr_attempt) — blocks is a list of normalised block
+            dicts (text, bbox, confidence, language, type, engine_used);
+            ocr_attempt records which image variant produced the accepted
+            result: "original" | "enhanced" | "threshold" | "surya".
         """
         # ---- 1. Run PaddleOCR (always — fast path) ----------------------
         paddle_blocks = self.paddle.extract_text(image)
@@ -102,30 +115,86 @@ class EngineRouter:
         has_table = len(paddle_tables) > 0
         is_mixed_script = _detect_mixed_script(paddle_blocks)
 
+        page_height, page_width = image.shape[:2]
+        # Computed on raw text blocks only, before correction/structure
+        # detection run — text_quality and page_coverage are therefore
+        # approximations (no correction_applied signal yet, no table/figure
+        # area yet). Good enough as an early retry/fallback gate; tasks.py
+        # recomputes the authoritative per-page score after the full
+        # pipeline (correction + structure detection) has run.
+        quality_score = compute_page_quality_score(paddle_blocks, page_width, page_height)
+
         threshold = settings.PADDLE_CONFIDENCE_THRESHOLD
+        quality_threshold = settings.QUALITY_SCORE_THRESHOLD
+        ocr_attempt = "original"
 
         routing_decision = {
             "avg_confidence": round(avg_confidence, 4),
             "threshold": threshold,
+            "quality_score": round(quality_score, 4),
+            "quality_threshold": quality_threshold,
             "has_table": has_table,
             "is_mixed_script": is_mixed_script,
             "paddle_block_count": len(paddle_blocks),
         }
 
+        # ---- 2b. Image-variant retry (item 2) — same engine, different
+        # preprocessing, tried BEFORE the (slower, different-engine) Surya
+        # fallback. Only runs when confidence or quality is the actual
+        # problem — a table or a script the primary model doesn't cover
+        # won't be fixed by contrast/threshold tweaks, so don't waste the
+        # retry budget.
+        if (
+            (avg_confidence < threshold or quality_score < quality_threshold)
+            and not has_table
+            and not is_mixed_script
+            and settings.ENABLE_IMAGE_VARIANT_RETRY
+        ):
+            best_blocks, best_confidence, best_attempt = paddle_blocks, avg_confidence, ocr_attempt
+            for name, transform in _IMAGE_VARIANTS[: settings.IMAGE_VARIANT_MAX_ATTEMPTS]:
+                try:
+                    variant_image = transform(image)
+                    variant_blocks = self.paddle.extract_text(variant_image)
+                except Exception as exc:
+                    logger.warning("Image-variant retry '%s' failed, skipping: %s", name, exc, exc_info=True)
+                    continue
+                variant_confidence = _compute_avg_confidence(variant_blocks)
+                logger.info(
+                    "Image-variant retry '%s': avg_confidence=%.4f (best so far: %.4f from '%s')",
+                    name, variant_confidence, best_confidence, best_attempt,
+                )
+                if variant_confidence > best_confidence:
+                    best_blocks, best_confidence, best_attempt = variant_blocks, variant_confidence, name
+                if best_confidence >= threshold:
+                    break  # good enough — stop spending retry budget
+
+            paddle_blocks, avg_confidence, ocr_attempt = best_blocks, best_confidence, best_attempt
+            quality_score = compute_page_quality_score(paddle_blocks, page_width, page_height)
+            routing_decision["avg_confidence"] = round(avg_confidence, 4)
+            routing_decision["quality_score"] = round(quality_score, 4)
+            routing_decision["winning_attempt"] = ocr_attempt
+
         # ---- 3a. Fast path: accept PaddleOCR output ----------------------
-        if avg_confidence >= threshold and not has_table and not is_mixed_script:
+        if (
+            avg_confidence >= threshold
+            and quality_score >= quality_threshold
+            and not has_table
+            and not is_mixed_script
+        ):
             logger.info(
-                "Routing decision: engine=paddleocr | %s",
-                routing_decision,
+                "Routing decision: engine=paddleocr (%s) | %s",
+                ocr_attempt, routing_decision,
             )
             for block in paddle_blocks:
                 block["engine_used"] = "paddleocr"
-            return paddle_blocks
+            return paddle_blocks, ocr_attempt
 
         # ---- 3b. Fallback path: trigger Surya ----------------------------
         trigger_reasons = []
         if avg_confidence < threshold:
             trigger_reasons.append(f"low_confidence({avg_confidence:.3f}<{threshold})")
+        if quality_score < quality_threshold:
+            trigger_reasons.append(f"low_quality_score({quality_score:.3f}<{quality_threshold})")
         if has_table:
             trigger_reasons.append("table_detected")
         if is_mixed_script:
@@ -152,14 +221,14 @@ class EngineRouter:
             )
             for block in paddle_blocks:
                 block["engine_used"] = "paddleocr"
-            return paddle_blocks
+            return paddle_blocks, ocr_attempt
 
         for block in surya_blocks:
             block["engine_used"] = "surya"
 
         # ---- 4. Merge best-of-both by block-level confidence/overlap -----
         merged = self._merge_blocks(paddle_blocks, surya_blocks)
-        return merged
+        return merged, "surya"
 
     # ------------------------------------------------------------------
     # Private helpers

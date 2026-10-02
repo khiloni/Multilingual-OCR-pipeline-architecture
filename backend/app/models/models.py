@@ -61,6 +61,7 @@ class Job(Base):
     )
     status = Column(String(50), nullable=False, default="queued", server_default=text("'queued'"))
     avg_confidence = Column(REAL, nullable=True)
+    avg_quality_score = Column(REAL, nullable=True)
     error_message = Column(Text, nullable=True)
     started_at = Column(
         DateTime,
@@ -91,6 +92,9 @@ class Page(Base):
     )
     page_number = Column(Integer, nullable=False)
     languages_detected = Column(String(255), nullable=True)
+    ocr_attempt = Column(String(20), nullable=True)
+    quality_score = Column(REAL, nullable=True)
+    search_text = Column(Text, nullable=True)
 
     job = relationship("Job", back_populates="pages")
     blocks = relationship("Block", back_populates="page", cascade="all, delete-orphan")
@@ -129,5 +133,11 @@ class Block(Base):
     # (worker/pipeline/postprocess.py): "accepted" | "flagged" | "needs_review",
     # derived from the block's own confidence.
     review_status = Column(String(20), nullable=True)
+    # API-based correction (worker/pipeline/correction.py). `content` above
+    # already holds the (possibly corrected) text shown everywhere; these
+    # two preserve the raw OCR text and whether a correction actually
+    # changed it, for audit — never overwritten, never lost.
+    original_text = Column(Text, nullable=True)
+    correction_applied = Column(Boolean, nullable=True)
 
     page = relationship("Page", back_populates="blocks")

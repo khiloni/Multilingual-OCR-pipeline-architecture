@@ -52,6 +52,8 @@ services:
       args:
         REQUIREMENTS_FILE: requirements-api.txt
     container_name: docscribe_backend
+    env_file:
+      - .env
     environment:
       - PORT=8000
       - HOST=0.0.0.0
@@ -77,6 +79,8 @@ services:
         REQUIREMENTS_FILE: requirements-worker.txt
     container_name: docscribe_worker
     command: celery -A worker.celery_app worker --loglevel=info --concurrency=1 --prefetch-multiplier=1
+    env_file:
+      - .env
     environment:
       - POSTGRES_HOST=postgres
       - REDIS_HOST=redis
@@ -91,6 +95,7 @@ services:
     volumes:
       - ./backend/app:/app/app
       - ./backend/worker:/app/worker
+      - ./evaluation:/app/evaluation
       - paddlex_cache:/root/.paddlex
       - hf_cache:/root/.cache/huggingface
       - torch_cache:/root/.cache/torch

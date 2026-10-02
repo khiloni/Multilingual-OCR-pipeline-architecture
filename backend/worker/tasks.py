@@ -7,7 +7,7 @@ import json
 import logging
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import fitz  # PyMuPDF — used only to count pages here; rasterization is in preprocess
@@ -18,9 +18,11 @@ from app.models.models import Block, Document, Job, Page
 from app.services.storage import storage_service
 from worker.celery_app import celery_app
 from worker.pipeline.engines.structure_engine import StructureEngine, find_caption
-from worker.pipeline.normalize import convert_to_markdown, normalize_to_common_schema
+from worker.pipeline.export_pdf import create_highlighted_pdf, create_searchable_pdf, create_structured_pdf
+from worker.pipeline.normalize import convert_to_markdown, convert_to_txt, normalize_to_common_schema
 from worker.pipeline.postprocess import postprocess_page_blocks
 from worker.pipeline.preprocess import preprocess_page, rasterize_pdf_page
+from worker.pipeline.quality import compute_page_quality_score
 from worker.pipeline.router import EngineRouter
 
 logger = logging.getLogger(__name__)
@@ -119,11 +121,14 @@ def _set_job_status(
     status: str,
     *,
     avg_confidence: Optional[float] = None,
+    avg_quality_score: Optional[float] = None,
     completed: bool = False,
 ) -> None:
     job.status = status
     if avg_confidence is not None:
         job.avg_confidence = avg_confidence
+    if avg_quality_score is not None:
+        job.avg_quality_score = avg_quality_score
     if completed:
         job.completed_at = datetime.utcnow()
     db.commit()
@@ -148,7 +153,7 @@ def _process_single_page(
     page_index: int,
     page_number: int,
     job_id: uuid.UUID,
-) -> List[Dict[str, Any]]:
+) -> Tuple[List[Dict[str, Any]], str, Optional[bytes]]:
     """
     Rasterises, preprocesses, and runs OCR routing for one PDF page.
 
@@ -158,8 +163,12 @@ def _process_single_page(
     existed. Upload failure is logged but never fails the page — the OCR
     result matters more than the preview image.
 
-    Returns a list of raw block dicts (no engine_used / block_id yet — those
-    are added by the router and normaliser respectively).
+    Returns (blocks, ocr_attempt, image_bytes) — blocks is a list of raw
+    block dicts (no engine_used / block_id yet — those are added by the
+    router and normaliser respectively); ocr_attempt records which image
+    variant won (router.EngineRouter.process_page — Phase 2 item 2);
+    image_bytes is the raw rasterized PNG, reused by create_searchable_pdf()
+    (Phase 2 item 1) so it isn't re-rasterized or re-downloaded from MinIO.
 
     Any exception is caught, logged, and an error sentinel block is returned
     so the failure is visible in the output without aborting the whole job
@@ -181,8 +190,11 @@ def _process_single_page(
             )
 
         image = preprocess_page(image_bytes)
-        blocks = router.process_page(image)
-        logger.info("Page %d: %d text blocks extracted", page_number, len(blocks))
+        blocks, ocr_attempt = router.process_page(image)
+        logger.info(
+            "Page %d: %d text blocks extracted (ocr_attempt=%s)",
+            page_number, len(blocks), ocr_attempt,
+        )
 
         # Structure detection (tables + figures/charts — Phase 1 items 4/5).
         # Runs unconditionally, unlike the confidence-gated Surya fallback —
@@ -206,7 +218,7 @@ def _process_single_page(
         # the full combined list so it can tell which plain-text blocks
         # fall inside a table/figure region and should be dropped as
         # duplicates rather than kept as independent content.
-        return postprocess_page_blocks(blocks + table_blocks + figure_blocks)
+        return postprocess_page_blocks(blocks + table_blocks + figure_blocks), ocr_attempt, image_bytes
     except Exception as exc:
         logger.error(
             "Page %d processing failed: %s",
@@ -227,7 +239,7 @@ def _process_single_page(
                 "review_status": "needs_review",
                 "needs_review": True,
             }
-        ]
+        ], "error", None
 
 
 def _upload_figure_crops(normalized_output: Dict[str, Any], job_id: uuid.UUID) -> None:
@@ -260,6 +272,37 @@ def _upload_figure_crops(normalized_output: Dict[str, Any], job_id: uuid.UUID) -
                 )
 
 
+def _compute_quality_scores(
+    normalized_output: Dict[str, Any], page_images: Dict[int, bytes]
+) -> float:
+    """
+    Computes the authoritative per-page OCR quality score (Phase 2 item 5)
+    now that correction + structure detection have both run, mutating each
+    page dict in place with "quality_score". Unlike router.py's early
+    retry-gate score (raw text blocks only, before correction), this one
+    sees the complete picture: corrected text, tables, and figures.
+
+    Returns the document-level average (mean of per-page scores), or 0.0 if
+    there are no pages.
+    """
+    scores = []
+    for page_data in normalized_output.get("pages", []):
+        page_number = page_data["page_number"]
+        image_bytes = page_images.get(page_number)
+        if image_bytes:
+            nparr = np.frombuffer(image_bytes, dtype=np.uint8)
+            decoded = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            height, width = decoded.shape[:2] if decoded is not None else (0, 0)
+        else:
+            height, width = 0, 0
+
+        score = compute_page_quality_score(page_data.get("blocks", []), width, height)
+        page_data["quality_score"] = round(score, 4)
+        scores.append(score)
+
+    return sum(scores) / len(scores) if scores else 0.0
+
+
 def _persist_pages_and_blocks(
     db,
     job: Job,
@@ -277,6 +320,11 @@ def _persist_pages_and_blocks(
             job_id=job.id,
             page_number=page_data["page_number"],
             languages_detected=",".join(page_data.get("language_detected", [])),
+            ocr_attempt=page_data.get("ocr_attempt"),
+            quality_score=page_data.get("quality_score"),
+            search_text=" ".join(
+                b.get("text", "") for b in page_data.get("blocks", []) if b.get("text")
+            ),
         )
         db.add(page_row)
         db.flush()  # populate page_row.id before referencing it in Block rows
@@ -298,6 +346,8 @@ def _persist_pages_and_blocks(
                 caption=block_data.get("caption") if block_type == "figure" else None,
                 needs_review=block_data.get("needs_review"),
                 review_status=block_data.get("review_status"),
+                original_text=block_data.get("original_text"),
+                correction_applied=block_data.get("correction_applied"),
             )
             db.add(block_row)
 
@@ -372,6 +422,8 @@ def process_ocr(self, job_id_str: str, document_id_str: str) -> Dict[str, Any]:
         router = _get_router()
         structure_engine = _get_structure_engine()
         raw_pages: Dict[int, List[Dict[str, Any]]] = {}
+        page_ocr_attempts: Dict[int, str] = {}
+        page_images: Dict[int, bytes] = {}
 
         self.update_state(
             state="PROGRESS",
@@ -389,18 +441,25 @@ def process_ocr(self, job_id_str: str, document_id_str: str) -> Dict[str, Any]:
                 },
             )
 
-            blocks = _process_single_page(
+            blocks, ocr_attempt, image_bytes = _process_single_page(
                 router, structure_engine, pdf_bytes, page_index, page_number, job_id
             )
             raw_pages[page_number] = blocks
+            if image_bytes is not None:
+                page_images[page_number] = image_bytes
+            page_ocr_attempts[page_number] = ocr_attempt
 
         # ---- Normalise --------------------------------------------------
         self.update_state(
             state="PROGRESS", meta={"percent": 82, "status": "Normalising output schema"}
         )
-        normalized_output = normalize_to_common_schema(doc_id, document.filename, raw_pages)
+        normalized_output = normalize_to_common_schema(
+            doc_id, document.filename, raw_pages, page_ocr_attempts=page_ocr_attempts
+        )
         _upload_figure_crops(normalized_output, job_id)
+        avg_quality_score = _compute_quality_scores(normalized_output, page_images)
         markdown_output = convert_to_markdown(normalized_output)
+        txt_output = convert_to_txt(normalized_output)
 
         # ---- Persist Page + Block rows to Postgres ----------------------
         self.update_state(
@@ -416,10 +475,57 @@ def process_ocr(self, job_id_str: str, document_id_str: str) -> Dict[str, Any]:
             job_id, json.dumps(normalized_output, ensure_ascii=False, indent=2), "json"
         )
         storage_service.upload_result(job_id, markdown_output, "markdown")
+        storage_service.upload_result(job_id, txt_output, "txt")
+
+        try:
+            searchable_pdf_bytes = create_searchable_pdf(normalized_output, page_images)
+            storage_service.upload_result_binary(
+                job_id, searchable_pdf_bytes, "result_searchable.pdf", "application/pdf"
+            )
+        except Exception:
+            logger.warning(
+                "Failed to generate/upload searchable PDF for job_id=%s — "
+                "other results are unaffected",
+                job_id, exc_info=True,
+            )
+
+        try:
+            highlighted_pdf_bytes = create_highlighted_pdf(normalized_output, page_images)
+            storage_service.upload_result_binary(
+                job_id, highlighted_pdf_bytes, "result_highlighted.pdf", "application/pdf"
+            )
+        except Exception:
+            logger.warning(
+                "Failed to generate/upload highlighted PDF for job_id=%s — "
+                "other results are unaffected",
+                job_id, exc_info=True,
+            )
+
+        try:
+            def _fetch_crop(image_url: str) -> bytes:
+                # "minio://bucket/results/.../p1_b5.png" -> "results/.../p1_b5.png"
+                storage_path = image_url.split("/", 3)[3]
+                return storage_service.download_document(storage_path)
+
+            structured_pdf_bytes = create_structured_pdf(
+                normalized_output, page_images, fetch_crop=_fetch_crop
+            )
+            storage_service.upload_result_binary(
+                job_id, structured_pdf_bytes, "result_structured.pdf", "application/pdf"
+            )
+        except Exception:
+            logger.warning(
+                "Failed to generate/upload structured PDF for job_id=%s — "
+                "other results are unaffected",
+                job_id, exc_info=True,
+            )
 
         # ---- Mark job done ----------------------------------------------
         avg_conf = float(normalized_output["metadata"]["avg_confidence"])
-        _set_job_status(db, job, "done", avg_confidence=avg_conf, completed=True)
+        _set_job_status(
+            db, job, "done",
+            avg_confidence=avg_conf, avg_quality_score=avg_quality_score, completed=True,
+        )
 
         self.update_state(
             state="SUCCESS", meta={"percent": 100, "status": "Completed"}

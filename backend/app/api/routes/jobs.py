@@ -10,7 +10,7 @@ from typing import Literal, Optional, Tuple
 import pymupdf
 from botocore.exceptions import ClientError
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -145,6 +145,7 @@ def get_job_status(job_id: uuid.UUID, db: Session = Depends(get_db)):
         document_id=job.document_id,
         status=job.status,
         avg_confidence=job.avg_confidence,
+        avg_quality_score=job.avg_quality_score,
         error_message=job.error_message,
         started_at=job.started_at,
         completed_at=job.completed_at,
@@ -154,7 +155,9 @@ def get_job_status(job_id: uuid.UUID, db: Session = Depends(get_db)):
 @router.get("/{job_id}/result")
 def get_job_result(
     job_id: uuid.UUID,
-    format: Literal["json", "markdown"] = Query("json", description="Desired response payload format"),
+    format: Literal[
+        "json", "markdown", "txt", "searchable_pdf", "highlighted_pdf", "structured_pdf"
+    ] = Query("json", description="Desired response payload format"),
     db: Session = Depends(get_db),
 ):
     """
@@ -169,8 +172,17 @@ def get_job_result(
             detail=f"Job {job_id} is '{job.status}', not finished yet.",
         )
 
-    ext = "md" if format == "markdown" else "json"
-    storage_path = f"results/{job_id}/result.{ext}"
+    _PDF_FILENAMES = {
+        "searchable_pdf": "result_searchable.pdf",
+        "highlighted_pdf": "result_highlighted.pdf",
+        "structured_pdf": "result_structured.pdf",
+    }
+    if format in _PDF_FILENAMES:
+        storage_path = f"results/{job_id}/{_PDF_FILENAMES[format]}"
+    else:
+        ext = {"markdown": "md", "txt": "txt"}.get(format, "json")
+        storage_path = f"results/{job_id}/result.{ext}"
+
     try:
         raw = storage_service.download_document(storage_path)
     except ClientError as exc:
@@ -181,6 +193,14 @@ def get_job_result(
 
     if format == "markdown":
         return JSONResponse(content={"markdown": raw.decode("utf-8")})
+    if format == "txt":
+        return JSONResponse(content={"txt": raw.decode("utf-8")})
+    if format in _PDF_FILENAMES:
+        return Response(
+            content=raw,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{_PDF_FILENAMES[format]}"'},
+        )
     return JSONResponse(content=json.loads(raw))
 
 
@@ -233,6 +253,9 @@ def get_page_result(
             "caption": b.caption,
             "needs_review": b.needs_review,
             "review_status": b.review_status,
+            "original_text": b.original_text,
+            "corrected_text": b.content or "",
+            "correction_applied": b.correction_applied,
         }
         for idx, b in enumerate(block_rows)
     ]
@@ -247,6 +270,8 @@ def get_page_result(
         "job_id": job_id,
         "page_number": page_number,
         "image_preview_url": image_preview_url,
+        "ocr_attempt": page.ocr_attempt,
+        "quality_score": page.quality_score,
         "blocks": blocks,
     }
 

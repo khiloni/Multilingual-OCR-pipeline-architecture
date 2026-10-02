@@ -1,0 +1,101 @@
+image,language,actual_text,v5_prediction,stock_prediction,cer_v5
+images/en_0000.png,en,Invoice Number 48213,Invoice Number 48213,Invoice Number 48213,0.0000
+images/en_0001.png,en,Total Amount Due 1024.50,Total Amount Due 1024.50,Total Amount Due 1024.50,0.0000
+images/en_0002.png,en,Payment Terms Net 30 Days,Payment Terms Net 30 Days,Payment Terms Net 30 Days,0.0000
+images/en_0003.png,en,Shipping Address London,Shipping Addess London,Shipping Addess London,0.0435
+images/en_0004.png,en,Customer Name John Smith,Customer Name John Smith,Customer Name John Smith,0.0000
+images/en_0005.png,en,Order Date 12 March 2026,Order Date 12 March 2026,Order Date 12 March 2026,0.0000
+images/en_0006.png,en,Quantity Ordered 150 Units,Quantity Ordered 150 Units,Quantity Ordered 150 Units,0.0000
+images/en_0007.png,en,Discount Applied 10 Percent,Discount Applied 10 Percent,Discount Applied 10 Percent,0.0000
+images/en_0008.png,en,Subtotal Before Tax 920.00,Subtotal Before Tax 920.00,Subtotal Before Tax 920.00,0.0000
+images/en_0009.png,en,Tax Rate 8 Percent Applied,Tax Rate 8 Percent Applied,Tax Rate 8 Percent Applied,0.0000
+images/en_0010.png,en,Grand Total 1012.50 USD,Grand Total 1012.50 USD,Grand Total 1012.50 USD,0.0000
+images/en_0011.png,en,Delivery Method Express Courier,Delivery Method Express Courier,Delivery Method Express Courier,0.0000
+images/en_0012.png,en,Warehouse Location Mumbai India,Warehouse Location Mumbai India,Warehouse Location Mumba a,0.0000
+images/en_0013.png,en,Product Code SKU 77412,Product Code SKU 77412,Product Code SKU 77412,0.0000
+images/en_0014.png,en,Return Policy 30 Days,Return Policy 30 Days,Return Policy 30 Days,0.0000
+images/en_0015.png,en,Contact Email support@example.com,Contact Email supporbexample.com,CntaEmasupport@example.com,0.0606
+images/en_0016.png,en,Phone Number 9876543210,Phone Number 9876543210,Phone Number 9876543210,0.0000
+images/en_0017.png,en,Account Balance 450.75,Account Balance 450.75,Account Balance 450.75,0.0000
+images/en_0018.png,en,Reference Number REF2026031,Reference Number REF2026031,Reference Number REF2026031,0.0000
+images/en_0019.png,en,Billing Cycle Monthly Plan,Billing Cycle Monthly Plan,Billing Cycle Monthly Plan,0.0000
+images/en_0020.png,en,Signature Required Yes,Signature Required Yes,Signature Required Yes,0.0000
+images/en_0021.png,en,Vendor Name Acme Corporation,Vendor Name Acme Corporation,Vendor Name Acme Corporation,0.0000
+images/en_0022.png,en,Purchase Order PO99231,Purchase Order PO99231,Purchase Order PO99231,0.0000
+images/en_0023.png,en,Currency United States Dollar,Currency United States Dlollar,Currency United States Dollar,0.0345
+images/en_0024.png,en,Status Pending Approval,Status Pending Approval,Status Pending Approval,0.0000
+images/hi_0000.png,hi,नमस्ते भारत,नमस्ते भारत,,0.0000
+images/hi_0001.png,hi,कुल राशि चालान,कुल राश चिाान,  ,0.2143
+images/hi_0002.png,hi,धन्यवाद आभार,धन्यवाद आभार, ,0.0000
+images/hi_0003.png,hi,संख्या और तारीख,संख्या और तारीख, B ,0.0000
+images/hi_0004.png,hi,ग्राहक का नाम राज,ग्राहक का नाम राज,,0.0000
+images/hi_0005.png,hi,कृपया भुगतान करें,कृपया भुगतान करे,,0.0588
+images/hi_0006.png,hi,वस्तु की मात्रा दस,वस्तु की मात्रा दस,,0.0000
+images/hi_0007.png,hi,दिनांक पंद्रह मार्च,दनिंक पंद्रह मार्च,Gh ,0.1053
+images/hi_0008.png,hi,कुल योग पांच सौ,कुल योग पांच सौ, ,0.0000
+images/hi_0009.png,hi,बैंक खाता संख्या,बैक खाता संख्या, ,0.0625
+images/hi_0010.png,hi,पता शहर मुंबई,पता शहर मुंबई,,0.0000
+images/hi_0011.png,hi,फोन नंबर सही है,फोन नंबर सही है,,0.0000
+images/hi_0012.png,hi,ईमेल पता लिखें,ईमेल पता लखि, ,0.2143
+images/hi_0013.png,hi,उत्पाद कोड चार सात,उत्पाद कोड चार सात, S R ,0.0000
+images/hi_0014.png,hi,वापसी नीति तीस दिन,वापसी नीत तीस दनि, A,0.1667
+images/hi_0015.png,hi,छूट दस प्रतिशत लागू,छूट दस प्रतशित लागू,,0.1053
+images/hi_0016.png,hi,कर की दर आठ,कर की दर ठ,,0.0909
+images/hi_0017.png,hi,वितरण विधि तेज़,वतिरण वधि तिेज़,aUT a,0.2667
+images/hi_0018.png,hi,गोदाम स्थान दिल्ली,गोदाम स्थान दलिली,  ,0.1111
+images/hi_0019.png,hi,खाता शेष राशि,खाता शेष रा,TAT 2T R,0.1538
+images/hi_0020.png,hi,संदर्भ संख्या लिखें,संदर्भ संख्या लखि,,0.1579
+images/hi_0021.png,hi,मासिक योजना चुनें,मासकि योजना चुने,,0.1765
+images/hi_0022.png,hi,हस्ताक्षर आवश्यक है,हस्ताक्षर आवश्यक है,,0.0000
+images/hi_0023.png,hi,आपूर्तिकर्ता नाम शर्मा,आपूर्तकिर्ता नाम शर्मा,,0.0909
+images/hi_0024.png,hi,स्थिति लंबित है,स्थति लिंबति है,,0.2667
+images/mr_0000.png,mr,नमस्कार महाराष्ट्र,नमस्कार महाराष्ट्र,,0.0000
+images/mr_0001.png,mr,एकूण रक्कम दिनांक,एकूण रक्कम दनिांक,T  ih,0.1176
+images/mr_0002.png,mr,धन्यवाद आपले,धन्यवाद आपले, ,0.0000
+images/mr_0003.png,mr,पावती क्रमांक,पावती क्रमांक,gla ,0.0000
+images/mr_0004.png,mr,ग्राहकाचे नाव सुरेश,ग्राहकाचे नाव सुरेश, ,0.0000
+images/mr_0005.png,mr,कृपया पैसे भरा,कृपया पैसे भरा,,0.0000
+images/mr_0006.png,mr,वस्तूंची संख्या पाच,वस्तूंची संख्या पाच, ,0.0000
+images/mr_0007.png,mr,तारीख वीस मार्च,तारीख वीस मार्च,,0.0000
+images/mr_0008.png,mr,एकूण बेरीज सहाशे,एकूण बेरीज सहाशे,,0.0000
+images/mr_0009.png,mr,बँक खाते क्रमांक,बँक खाते क्रमांक,  ich,0.0000
+images/mr_0010.png,mr,पत्ता शहर पुणे,पत्ता शहर पुणे, ,0.0000
+images/mr_0011.png,mr,फोन नंबर बरोबर,फोन नंबर बरोबर, RRTOR,0.0000
+images/mr_0012.png,mr,ईमेल पत्ता लिहा,ईमेल पत्ता लहि, ,0.1333
+images/mr_0013.png,mr,उत्पादन कोड आठ नऊ,उत्पादन कोड आठ ऊ,347 chts 30 7,0.0588
+images/mr_0014.png,mr,परतावा धोरण तीस,परतावा धोरण तीस,a ,0.0000
+images/mr_0015.png,mr,सूट पंधरा टक्के,सूट पंधरा टक्के,  ,0.0000
+images/mr_0016.png,mr,कराचा दर सात,कराचा दर सात,,0.0000
+images/mr_0017.png,mr,वितरण पद्धत जलद,वतिरण पद्धत जलद,ARUT  ,0.1333
+images/mr_0018.png,mr,गोदाम स्थान नागपूर,गोदाम स्थान नागपूर,,0.0000
+images/mr_0019.png,mr,खाते शिल्लक रक्कम,खाते शलिल्लक रक्कम,ad h ch,0.0588
+images/mr_0020.png,mr,संदर्भ क्रमांक लिहा,संदर्भ क्रमांक लहिा,,0.1053
+images/mr_0021.png,mr,मासिक योजना निवडा,मासकि योजना नविडा,,0.2353
+images/mr_0022.png,mr,स्वाक्षरी आवश्यक आहे,स्वाक्षरी आवश्यक आहे,,0.0000
+images/mr_0023.png,mr,पुरवठादार नाव पाटील,पुरवठादार नाव पाील,gR  ,0.0526
+images/mr_0024.png,mr,स्थिती प्रलंबित आहे,स्थतिी प्रलंबति आहे,  ,0.2105
+images/gu_0000.png,gu,નમસ્તે ગુજરાત,નમસ્તે ગુજાત,H,0.0769
+images/gu_0001.png,gu,કુલ રકમ તારીખ,કુલ રકમ તારીખ,E2SH U,0.0000
+images/gu_0002.png,gu,આભાર તમારો,આભાર તમમાારો,2R HRI,0.2000
+images/gu_0003.png,gu,ચલણ નંબર,ચલણ ન નબર,2GL FOR,0.2500
+images/gu_0004.png,gu,ગ્રાહકનું નામ પટેલ,ગ્રાહકનું નામ પટેલ,R H ZE,0.0000
+images/gu_0005.png,gu,કૃપા કરી ચુકવણી કરો,કૃપા કરી ચુકવણી કરો, s ysqil sz,0.0000
+images/gu_0006.png,gu,વસ્તુઓની સંખ્યા પાંચ,વસ્તુઓની સંખ્યા પાંચ,a 2i ,0.0000
+images/gu_0007.png,gu,તારીખ વીસ માર્ચ,તારીખ વીસ માર્ચ,R  HA,0.0000
+images/gu_0008.png,gu,કુલ સરવાળો છસો,કુલ સરવાળો છસો,  ,0.0000
+images/gu_0009.png,gu,બેંક ખાતા નંબર,બેક ખાતા નંબર,aAs AL IR,0.0714
+images/gu_0010.png,gu,સરનામું શહેર સુરત,સરનામું શહેર સુરત,221212,0.0000
+images/gu_0011.png,gu,ફોન નંબર સાચો છે,ફોન નંબર સાચો છે,H R,0.0000
+images/gu_0012.png,gu,ઈમેલ સરનામું લખો,ઈમેલ સરનામું લખો,SAE RA GU,0.0000
+images/gu_0013.png,gu,ઉત્પાદન કોડ આઠ નવ,ઉત્પાદન કોડ આઠ નવ,GUIE 51S 218,0.0000
+images/gu_0014.png,gu,વળતર નીતિ ત્રીસ દિવસ,વળતર નીત ત્રીસ દવિસ,a E,0.1500
+images/gu_0015.png,gu,છૂટ પંદર ટકા,છૂટ પંદર ટ2કા,E2 UER2SI,0.0833
+images/gu_0016.png,gu,કરનો દર સાત,કરનો દર સાત,S2ERD,0.0000
+images/gu_0017.png,gu,વિતરણ પદ્ધતિ ઝડપી,વતિરણ પદ્ધત ઝડપી,aSu,0.1765
+images/gu_0018.png,gu,ગોદામ સ્થાન રાજકોટ,ગોદામ સ્થાન રાજકોટ,2,0.0000
+images/gu_0019.png,gu,ખાતાની બાકી રકમ,ખાતાની બાકી રકમ,  2SH,0.0000
+images/gu_0020.png,gu,સંદર્ભ નંબર લખો,સંદર્ભ નંબર લખો,ZEZA IAR GL,0.0000
+images/gu_0021.png,gu,માસિક યોજના પસંદ કરો,માસકિ યોજના પસંદ કરો,H  E 21,0.1000
+images/gu_0022.png,gu,સહી જરૂરી છે,સહી જરૂરી છે,,0.0000
+images/gu_0023.png,gu,સપ્લાયરનું નામ શાહ,સપ્લાયરનું નામ શાહ,2 ,0.0000
+images/gu_0024.png,gu,સ્થિતિ બાકી છે,સ્થતિ બાકી છે,,0.0714

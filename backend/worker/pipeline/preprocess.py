@@ -24,6 +24,18 @@ _MIN_SKEW_DEG: float = 0.5
 # on CPU-only workers.
 _RASTER_DPI: int = 200
 
+# Hard cap on the longest rasterized edge, in pixels. Some scanned PDFs wrap a
+# high-resolution source image directly as a full-page image with the PDF
+# MediaBox sized to match the image's pixel dimensions (common output from
+# scan-to-PDF tools) rather than a standard page size — applying the fixed
+# _RASTER_DPI zoom on top of an already-oversized MediaBox multiplies the
+# pixel count further and can exceed available worker memory (observed:
+# SIGKILL / WorkerLostError on a ~9.4MP page with PaddleOCR + Surya + layout
+# detection models all resident in the same process). Downscaling to this cap
+# keeps every page within a predictable memory budget regardless of the
+# source page's physical point-size.
+_MAX_RASTER_EDGE_PX: int = 2200
+
 # fastNlMeansDenoising tuning — keep conservative defaults so clean prints
 # are not over-smoothed.
 _DENOISE_H: int = 10          # luminance filter strength
@@ -70,6 +82,20 @@ def rasterize_pdf_page(pdf_bytes: bytes, page_index: int, dpi: int = _RASTER_DPI
     page = doc[page_index]
     # fitz uses a zoom matrix — DPI / 72 converts to the desired resolution.
     zoom = dpi / 72.0
+
+    # Clamp zoom so the longest output edge never exceeds _MAX_RASTER_EDGE_PX,
+    # regardless of how large the page's own point-size already is.
+    longest_edge_pt = max(page.rect.width, page.rect.height)
+    projected_px = longest_edge_pt * zoom
+    if projected_px > _MAX_RASTER_EDGE_PX:
+        scale_factor = _MAX_RASTER_EDGE_PX / projected_px
+        zoom *= scale_factor
+        logger.info(
+            "Rasterize: page %d point-size %.0fx%.0f would exceed %dpx at %d DPI — "
+            "scaling zoom down to keep longest edge within the cap",
+            page_index, page.rect.width, page.rect.height, _MAX_RASTER_EDGE_PX, dpi,
+        )
+
     mat = fitz.Matrix(zoom, zoom)
     pix = page.get_pixmap(matrix=mat, alpha=False)
     png_bytes: bytes = pix.tobytes("png")
@@ -229,3 +255,44 @@ def denoise_image(image: np.ndarray) -> np.ndarray:
         searchWindowSize=_DENOISE_SEARCH_WIN,
     )
     return denoised
+
+
+# -------------------------------------------------------------------
+# Image-variant retry (Phase 2 item 2) — router.py tries these on a
+# low-confidence page, SAME engine, before falling back to Surya.
+# -------------------------------------------------------------------
+
+_CLAHE_CLIP_LIMIT: float = 3.0
+_CLAHE_TILE_GRID: tuple = (8, 8)
+
+
+def enhance_contrast_clahe(image: np.ndarray) -> np.ndarray:
+    """
+    Contrast-Limited Adaptive Histogram Equalization on the luminance
+    channel only (converts to LAB, equalizes L, converts back) — fixes
+    low-contrast/washed-out scans without blowing out color or introducing
+    the global-histogram-equalization artifacts flat `cv2.equalizeHist`
+    would on a BGR image.
+    """
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    l_channel, a_channel, b_channel = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=_CLAHE_CLIP_LIMIT, tileGridSize=_CLAHE_TILE_GRID)
+    l_enhanced = clahe.apply(l_channel)
+    enhanced = cv2.merge((l_enhanced, a_channel, b_channel))
+    return cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
+
+
+def adaptive_threshold_variant(image: np.ndarray) -> np.ndarray:
+    """
+    Adaptive (Gaussian) thresholding to a clean black-on-white binary
+    image — helps on pages with uneven lighting/shadows where a single
+    global threshold would lose text on the darker side of the page.
+    Returned as a 3-channel BGR image so it's a drop-in replacement for
+    the original (PaddleOCR expects BGR input throughout the pipeline).
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    binary = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY,
+        blockSize=31, C=15,
+    )
+    return cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)

@@ -46,6 +46,7 @@ def list_documents(
             latest_job_id=latest_job.id if latest_job else None,
             latest_status=latest_job.status if latest_job else None,
             avg_confidence=latest_job.avg_confidence if latest_job else None,
+            avg_quality_score=latest_job.avg_quality_score if latest_job else None,
             error_message=latest_job.error_message if latest_job else None,
         ))
     return results

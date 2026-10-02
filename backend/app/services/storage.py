@@ -124,14 +124,31 @@ class StorageService:
         return buffer.getvalue()
 
     def upload_result(self, job_id: UUID, content: str, file_format: str = "json") -> str:
-        """Saves the structured OCR output (JSON or Markdown) in object storage."""
+        """Saves the structured OCR output (JSON, Markdown, or plain text) in object storage."""
         ext = "md" if file_format == "markdown" else file_format
-        content_type = "text/markdown" if file_format == "markdown" else "application/json"
+        content_type = {
+            "markdown": "text/markdown",
+            "txt": "text/plain",
+        }.get(file_format, "application/json")
         storage_path = f"results/{job_id}/result.{ext}"
         self.client.put_object(
             Bucket=self.bucket,
             Key=storage_path,
             Body=content.encode("utf-8"),
+            ContentType=content_type,
+        )
+        logger.info("Uploaded result to s3://%s/%s", self.bucket, storage_path)
+        return storage_path
+
+    def upload_result_binary(
+        self, job_id: UUID, content: bytes, filename: str, content_type: str
+    ) -> str:
+        """Saves a binary result artifact (e.g. a generated PDF) in object storage."""
+        storage_path = f"results/{job_id}/{filename}"
+        self.client.put_object(
+            Bucket=self.bucket,
+            Key=storage_path,
+            Body=content,
             ContentType=content_type,
         )
         logger.info("Uploaded result to s3://%s/%s", self.bucket, storage_path)

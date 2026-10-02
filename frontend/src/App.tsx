@@ -8,12 +8,14 @@ import { JobStatus } from './components/JobStatus';
 import { PagePreview } from './components/PagePreview';
 import { ResultViewer } from './components/ResultViewer';
 import { DocumentList } from './components/DocumentList';
+import { SearchBox } from './components/SearchBox';
 import { api } from './api/client';
 import { RotateCcw, AlertTriangle, Layers, Loader2} from 'lucide-react';
 
 const OCRDashboard: React.FC = () => {
   const { state, setCurrentJob, updateJobStatus, updateOcrResult, setProcessing, resetState } = useAppStore();
   const [mockMarkdown, setMockMarkdown] = useState<string>('');
+  const [txtContent, setTxtContent] = useState<string>('');
   const [uploading, setUploading] = useState(false);
   const [documentListRefreshToken, setDocumentListRefreshToken] = useState(0);
 
@@ -33,8 +35,10 @@ const OCRDashboard: React.FC = () => {
           // Fetch final results
           const resultJson = await api.getJobResultJson(state.currentJobId!);
           const resultMd = await api.getJobResultMarkdown(state.currentJobId!);
+          const resultTxt = await api.getJobResultTxt(state.currentJobId!);
           updateOcrResult(resultJson);
           setMockMarkdown(resultMd.markdown);
+          setTxtContent(resultTxt.txt);
         } else if (status.status === 'failed') {
           setProcessing(false);
         }
@@ -149,6 +153,7 @@ const OCRDashboard: React.FC = () => {
               </p>
             </div>
             <UploadForm onUpload={handleUpload} disabled={uploading} />
+            <SearchBox />
             <DocumentList onViewDocument={handleViewDocument} refreshToken={documentListRefreshToken} />
           </div>
         ) : state.isProcessing ? (
@@ -194,7 +199,7 @@ const OCRDashboard: React.FC = () => {
             />
 
             {/* Right Hand: Structured Output Viewers */}
-            <ResultViewer result={state.ocrResult} markdownContent={mockMarkdown} />
+            <ResultViewer result={state.ocrResult} markdownContent={mockMarkdown} txtContent={txtContent} jobId={state.currentJobId!} />
           </div>
         ) : (
           <div className="text-center text-slate-500 py-12">
