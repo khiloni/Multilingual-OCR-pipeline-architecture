@@ -15,6 +15,35 @@
 - **Six export formats** — JSON (canonical), Markdown, TXT, Searchable PDF, Highlighted PDF, Structured PDF — see the table below.
 - **Document management UI** — upload, track status, search, and download results from a single dashboard.
 
+## System Flow
+
+```mermaid
+flowchart TD
+    A[Upload PDF] --> B[Store in MinIO<br/>enqueue Celery job]
+    B --> C[Rasterize page<br/>PyMuPDF, dimension-capped]
+    C --> D[Preprocess<br/>deskew + denoise]
+    D --> E[Primary OCR<br/>fine-tuned PaddleOCR]
+    E --> F{Confidence ≥ 0.85 AND<br/>Quality ≥ 0.70 AND<br/>no table AND no mixed script?}
+    F -->|Yes| K[Accept]
+    F -->|No| G[Image-variant retry<br/>CLAHE + adaptive threshold<br/>same engine, max 2 tries]
+    G --> H{Cleared threshold?}
+    H -->|Yes| K
+    H -->|No| I[Surya fallback<br/>merge by bbox IOU]
+    I --> K
+    K --> L[Structure detection<br/>tables + figures, every page]
+    L --> M[Post-process<br/>dedup · reading order · review tiers]
+    M --> N[Normalize to<br/>Common Output Schema]
+    N --> O{Correction enabled?}
+    O -->|Yes| P[LLM correction<br/>1 call/page, safety-railed]
+    O -->|No| Q[Skip — raw text kept]
+    P --> R[Quality score<br/>5 weighted signals]
+    Q --> R
+    R --> S[Persist: Postgres rows<br/>+ MinIO artifacts]
+    S --> T[Serve via API / UI<br/>JSON · Markdown · TXT<br/>3 PDF variants · search]
+```
+
+Full technical version of this diagram (with routing internals and DB schema): [`ARCHITECTURE.md §8`](./ARCHITECTURE.md#8-engine-routing-logic).
+
 ## How to run
 
 ```bash
