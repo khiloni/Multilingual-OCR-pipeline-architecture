@@ -348,6 +348,7 @@ def _persist_pages_and_blocks(
                 review_status=block_data.get("review_status"),
                 original_text=block_data.get("original_text"),
                 correction_applied=block_data.get("correction_applied"),
+                correction_reason=block_data.get("correction_reason"),
             )
             db.add(block_row)
 

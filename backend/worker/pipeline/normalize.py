@@ -190,10 +190,12 @@ def normalize_to_common_schema(
                 original_text = block.get("text", "")
                 corrected_text = text
                 correction_applied = corrected_text != original_text
+                correction_reason = "legacy_symspell"
             else:
                 original_text = correction.original_text
                 corrected_text = correction.corrected_text
                 correction_applied = correction.applied
+                correction_reason = correction.reason
 
             if lang:
                 page_languages.add(lang)
@@ -214,6 +216,7 @@ def normalize_to_common_schema(
                 "original_text": original_text,
                 "corrected_text": corrected_text,
                 "correction_applied": correction_applied,
+                "correction_reason": correction_reason,
                 "bbox": bbox,
                 "confidence": confidence,
                 "language": lang,

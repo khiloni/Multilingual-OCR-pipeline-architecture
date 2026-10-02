@@ -94,6 +94,7 @@ class BlockSchema(BaseModel):
     original_text: Optional[str] = None
     corrected_text: Optional[str] = None
     correction_applied: Optional[bool] = None
+    correction_reason: Optional[str] = None
 
 class PageSchema(BaseModel):
     """

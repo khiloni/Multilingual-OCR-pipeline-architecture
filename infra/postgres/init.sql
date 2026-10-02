@@ -62,7 +62,8 @@ CREATE TABLE IF NOT EXISTS blocks (
     -- corrected) text; original_text preserves the raw OCR text so both
     -- are recoverable — content is never overwritten without a trace.
     original_text TEXT,
-    correction_applied BOOLEAN
+    correction_applied BOOLEAN,
+    correction_reason VARCHAR(40)
 );
 
 -- Indexes for performance queries

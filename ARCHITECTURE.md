@@ -210,8 +210,18 @@ Before reading-order sorting and schema assembly, every page's raw block list (t
 - **Safety rails**: the response is validated (same block ids present, valid JSON, same script as the input) — any mismatch falls back to the raw OCR text for that block. A correction whose normalized edit distance exceeds `CORRECTION_MAX_EDIT_DISTANCE_RATIO` (default 0.30) is rejected as a rewrite rather than a spell-fix, keeping the raw text instead.
 - **Never crashes the pipeline**: any API failure, timeout, rate-limit, or malformed response is caught, logged as a warning, and the page proceeds with raw OCR text — `correct_page_blocks()` always returns a result parallel to its input and never raises.
 - Cached in-process by `hash(text, language)`; retried with backoff up to `CORRECTION_MAX_RETRIES`.
-- Each block stores `original_text`, `corrected_text` (= `text`), and `correction_applied: bool` — review gating no longer applies to a text block once correction has run on it (`needs_review` is forced `false` when `correction_applied` is true).
+- Each block stores `original_text`, `corrected_text` (= `text`), `correction_applied: bool`, and `correction_reason` — review gating no longer applies to a text block once correction has run on it (`needs_review` is forced `false` when `correction_applied` is true). `correction_reason` is one of: `ok` (corrected, or checked and already correct), `skipped_type` (table/figure/empty), `skipped_high_confidence` (≥ `CORRECTION_SKIP_CONFIDENCE`), `cache_hit`, `provider_disabled` (`CORRECTION_PROVIDER=none`), `api_error` (request failed after retries — raw text kept), `invalid_response` (provider omitted this block id), `edit_distance_rejected` (looked like a rewrite, not a fix), or `legacy_symspell`.
 - **Privacy**: when an external provider is enabled, OCR'd document text is sent to that provider's API. See README "Privacy" note before enabling for sensitive documents.
+
+#### Gemini rate limiting
+
+Gemini's free tier caps `gemini-3.8-flash` at both a per-minute **and** a per-day request quota (observed directly from the API's own error payloads: `generate_content_free_tier_requests`, 5/min and, separately, `GenerateRequestsPerDayPerProjectPerModel-FreeTier` at 20/day) — far tighter than Anthropic/OpenAI have shown. `GeminiCorrectionProvider` (`worker/pipeline/correction.py`) handles the per-minute case proactively and the per-day case safely, since no client-side logic can fix a daily cap:
+
+1. **Proactive client-side throttle** (`_wait_for_rate_limit()`) — a process-wide rate limiter, shared across every job and page (module-level state, not per-call-site), spaces Gemini calls at least `60 / CORRECTION_RPM` seconds apart (default `CORRECTION_RPM=5` → 12s). Runs before every attempt, success or retry.
+2. **Exact-delay 429 handling, with a sanity cap** — on a `429 RESOURCE_EXHAUSTED`, the server's own `google.rpc.RetryInfo.retryDelay` is parsed out of the structured error payload (`_parse_retry_delay_seconds()`) and waited out precisely, rather than a generic exponential backoff that might under- or over-wait relative to what the server actually told us. **But** a per-minute quota's delay is a handful of seconds, while a per-*day* quota's delay can be the time until the next daily reset — observed as high as ~13.5 hours. Blindly sleeping that long inside a worker task (`concurrency=1`) would hang the entire worker for the wait's duration, blocking every other job. So a delay beyond `GEMINI_MAX_HONORED_RETRY_DELAY_SECONDS` (default 60s) is treated as unrecoverable within this job — it falls back to raw text immediately instead of waiting. A capped number of *honored* (short) 429 waits (`_MAX_RATE_LIMIT_WAITS = 3`) still applies on top of that.
+3. Waits from (1) and the honored waits in (2) do **not** count against `GEMINI_RETRY_ATTEMPTS` — that budget is reserved for genuine `5xx`/network failures, handled separately with exponential backoff (`GEMINI_RETRY_INITIAL_DELAY_SECONDS` → `GEMINI_RETRY_MAX_DELAY_SECONDS`).
+
+The SDK's own built-in HTTP retry is disabled (`attempts=1` in `HttpOptions.retry_options`) so this manual loop has sole control over every wait. Still one call per page; still falls back to raw OCR text on any unrecovered failure — this only changes *how* a retry-worthy failure is waited out, not the one-call-per-page design or the safety-rail contract above.
 
 ### 9.6 OCR quality score
 
@@ -366,6 +376,7 @@ erDiagram
         text content
         text original_text
         boolean correction_applied
+        string correction_reason
         json bbox
         float confidence
         string language

@@ -256,6 +256,7 @@ def get_page_result(
             "original_text": b.original_text,
             "corrected_text": b.content or "",
             "correction_applied": b.correction_applied,
+            "correction_reason": b.correction_reason,
         }
         for idx, b in enumerate(block_rows)
     ]

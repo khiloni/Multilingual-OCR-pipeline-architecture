@@ -139,5 +139,6 @@ class Block(Base):
     # changed it, for audit — never overwritten, never lost.
     original_text = Column(Text, nullable=True)
     correction_applied = Column(Boolean, nullable=True)
+    correction_reason = Column(String(40), nullable=True)
 
     page = relationship("Page", back_populates="blocks")

@@ -62,6 +62,26 @@ class Settings(BaseSettings):
     # (normalized edit distance) is treated as a rewrite, not a spell fix,
     # and rejected — the raw OCR text is kept instead.
     CORRECTION_MAX_EDIT_DISTANCE_RATIO: float = 0.30
+    # Gemini-specific: observed sustained 503 "high demand" responses from
+    # the Gemini API in practice, worse than the generic retry budget above
+    # was sized for. Tuned independently so Anthropic/OpenAI aren't forced
+    # into unnecessarily long retry loops they haven't needed.
+    GEMINI_RETRY_ATTEMPTS: int = 5
+    GEMINI_RETRY_INITIAL_DELAY_SECONDS: float = 1.0
+    GEMINI_RETRY_MAX_DELAY_SECONDS: float = 30.0
+    # Proactive client-side throttle, shared process-wide across every job/
+    # page — spaces Gemini calls at least 60/CORRECTION_RPM seconds apart so
+    # the free-tier per-minute quota isn't hit in the first place. Default 5
+    # matches the observed "generate_content_free_tier_requests" quota.
+    CORRECTION_RPM: int = 5
+    # Sanity cap on an honored 429 retryDelay — a per-minute quota's delay is
+    # a handful of seconds, but a server can also report a much longer delay
+    # (observed: 48642s / ~13.5h, consistent with a DAILY quota exhausted,
+    # not the per-minute one) that must never be slept through inside a
+    # worker task (concurrency=1 — that would hang the entire worker for the
+    # wait's duration). A delay beyond this cap is treated as "not
+    # recoverable within this job" and falls back to raw text instead.
+    GEMINI_MAX_HONORED_RETRY_DELAY_SECONDS: float = 60.0
 
     # OCR quality score (Phase 2 item 5) — weights must sum to 1.0.
     QUALITY_WEIGHT_CONFIDENCE: float = 0.35

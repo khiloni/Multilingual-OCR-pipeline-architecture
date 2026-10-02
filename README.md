@@ -144,15 +144,33 @@ pytest evaluation/scripts/run_e2e_test.py -v
 
 Figure crops are stored in MinIO at `results/{job_id}/p{page}_b{block}.png` and copied into `evaluation/real_pdf/outputs/<name>/figure_*.png` — e.g. `real_sample.pdf`'s page-3 figure (`p3_b5.png`, 997KB) and `real_sample1.pdf`'s two figures (`p1_b27.png`, `p2_b26.png`).
 
-Correction (Gemini) was applied to 7/39 blocks on `real_sample.pdf` and 21/68 on `real_sample1.pdf` — most of the remaining pages fell back to raw OCR text after exhausting retries against a Gemini API that was returning intermittent `503 UNAVAILABLE` ("high demand") during this run, which the pipeline handles by design (log it, keep the raw text, never fail the job). A few genuine before/after examples, with every number and identifier unchanged:
+### Correction outcome breakdown
 
-| Original (raw OCR) | Corrected | What changed |
-|---|---|---|
-| વર૨સે છે વાયરોને ધોધમા૨ ચોમાસું - ખાલીખમ. સોરવરમાં વા વળો | વરસે છે વાયરોને ધોધમાર ચોમાસું - ખાલીખમ સરોવરમાં વા વળો | Stray digit "૨" removed from two words; "સોરવરમાં"→"સરોવરમાં" spelling fix |
-| ંધારી સાંજનો. વાવી ઉજગરો બાર-બાર બાઉ મેં બાંધ્યો ઉ ઉાળો ! | અંધારી સાંજનો વાવી ઉજાગરો બાર-બાર ગાઉ મેં બાંધ્યો છે માળો ! | Missing leading letter restored; "બાઉ"→"ગાઉ", "ઉાળો"→"માળો" OCR-garble fixes |
-| ક્રમાlક: | ક્રમાંક: | Latin "l" misread for Gujarati matra, fixed |
-| વિદ્યાર્થાીએ અમારી સેસ્થામાં ચઆાલ સેમેસ્ટર / /7 અથવા વર્ષ 1/2//4 માં રૂ | વિદ્યાર્થીએ અમારી સંસ્થામાં ચાલુ સેમેસ્ટર / /7 અથવા વર્ષ 1/2//4 માં રૂ | Spelling fixes only — `/ /7` and `1/2//4` (semester/year codes) byte-for-byte unchanged |
-| ંપ્રથમ વર્ષે અરજી કા વર્ષ ૨૬૨૭માં પ્વેશ પેવવેલ વિર્યા્થી માટે | (પ્રથમ વર્ષે અરજી કરતા વર્ષ ૨૬૨૭માં પ્રવેશ મેળવેલ વિદ્યાર્થી માટે) | Spelling/grammar fixes only — the year "૨૬૨૭" (Gujarati numerals) is byte-for-byte unchanged |
+The latest reprocessing run (with a proactive rate limiter and exact-429-delay handling — see "Gemini rate limiting" below) was timed end-to-end: `real_sample.pdf` took **~250s**, `real_sample1.pdf` took **~518s** (3 pages each, OCR + structure detection + correction attempt + all 6 exports). Per-block correction outcome:
+
+| PDF | `api_error` | `skipped_high_confidence` | `ok` (corrected) | n/a (table/figure) |
+|---|---:|---:|---:|---:|
+| `real_sample.pdf` | 30 | 7 | 0 | 2 |
+| `real_sample1.pdf` | 59 | 6 | 0 | 3 |
+
+**0 new corrections — every attempt hit `api_error`.** The actual root cause, read directly from the API's error payload this time, is more precise than previously thought: this key is capped at **20 requests/day** (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`) for `gemini-3.8-flash`, not just a per-minute limit — and today's quota was already exhausted by earlier testing. No amount of client-side pacing fixes a daily cap; it needs either a paid-tier key, a different provider, or waiting for the daily reset.
+
+While verifying this, the exact-429-delay fix caught a real bug in itself: the API's `retryDelay` for a daily-quota 429 is enormous (~13.4 hours, since that's roughly how long until the daily reset), and honoring it literally would have slept the entire worker (concurrency=1) for that whole time, blocking every other job. Fixed with `GEMINI_MAX_HONORED_RETRY_DELAY_SECONDS` (default 60s) — a delay beyond that is treated as unrecoverable within this job and falls back to raw text immediately instead of sleeping through it. Confirmed working: the fallback now happens in under a second instead of hanging.
+
+Because no new corrections succeeded, the before/after examples below are still from the one earlier successful run (same two documents, same correction logic, before today's daily quota was exhausted) — 28 blocks were genuinely corrected that run. These documents are predominantly **Gujarati**, with one English scanner watermark line; every number, date code, and identifier is unchanged:
+
+| Language | Original (raw OCR) | Corrected | What changed |
+|---|---|---|---|
+| gu | વર૨સે છે વાયરોને ધોધમા૨ ચોમાસું - ખાલીખમ. સોરવરમાં વા વળો | વરસે છે વાયરોને ધોધમાર ચોમાસું - ખાલીખમ સરોવરમાં વા વળો | Stray digit "૨" removed from two words; spelling fix |
+| gu | ંધારી સાંજનો. વાવી ઉજગરો બાર-બાર બાઉ મેં બાંધ્યો ઉ ઉાળો ! | અંધારી સાંજનો વાવી ઉજાગરો બાર-બાર ગાઉ મેં બાંધ્યો છે માળો ! | Missing leading letter restored; OCR-garble fixes |
+| gu | ક્રમાlક: | ક્રમાંક: | Latin "l" misread for Gujarati matra, fixed |
+| gu | વિદ્યાર્થાીએ અમારી સેસ્થામાં ચઆાલ સેમેસ્ટર / /7 અથવા વર્ષ 1/2//4 માં રૂ | વિદ્યાર્થીએ અમારી સંસ્થામાં ચાલુ સેમેસ્ટર / /7 અથવા વર્ષ 1/2//4 માં રૂ | Spelling only — `/ /7` and `1/2//4` (semester/year codes) byte-for-byte unchanged |
+| gu | ંપ્રથમ વર્ષે અરજી કા વર્ષ ૨૬૨૭માં પ્વેશ પેવવેલ વિર્યા્થી માટે | (પ્રથમ વર્ષે અરજી કરતા વર્ષ ૨૬૨૭માં પ્રવેશ મેળવેલ વિદ્યાર્થી માટે) | Spelling/grammar only — year "૨૬૨૭" byte-for-byte unchanged |
+| gu | મખ્યમંત્રી યહવા સ્વાવંબન યોજના હેઠળ સહાય મેળવવા માટે | મુખ્યમંત્રી યુવા સ્વાવલંબન યોજના હેઠળ સહાય મેળવવા માટે | Scheme-name spelling fixes only |
+| gu | એનરોલમેન્ટ નંન્બર | એનરોલમેન્ટ નંબર | Doubled-letter typo fixed |
+| gu | એનઆરઆઈ બેઠક પર પવેશ મેળવેલ નથી | એનઆરઆઈ બેઠક પર પ્રવેશ મેળવેલ નથી | Missing conjunct restored ("પવેશ"→"પ્રવેશ") |
+| gu | સંસ્થાના વડાનં નામ, સહી અને સિક્કો | સંસ્થાના વડાનું નામ, સહી અને સિક્કો | Spelling fix only |
+| en | Scanned with OEN Scanner | Scanned with OKEN Scanner | Scanner watermark OCR fix |
 
 Full per-document outputs (all 6 formats + figure crops): [`evaluation/real_pdf/outputs/`](./evaluation/real_pdf/outputs/).
 
@@ -160,7 +178,9 @@ Full per-document outputs (all 6 formats + figure crops): [`evaluation/real_pdf/
 
 Post-OCR correction is **optional and off by default** (`CORRECTION_PROVIDER=none`). When a provider (Anthropic, OpenAI, or Gemini) is configured, page text is sent to that provider's API for correction, batched one call per page. Both `original_text` (raw OCR) and `corrected_text` are always stored, so a correction can be audited or reverted.
 
-**Measured token usage** (from the two successful Gemini calls in the real-PDF run above, one page each): 871+1538 = 2,409 input tokens and 474+1,089 = 1,563 output tokens across 2 pages — averaging **~1,205 input / ~782 output tokens per page**. At Gemini Flash-tier list pricing (~$0.10/M input, ~$0.40/M output — confirm the current rate at [ai.google.dev/pricing](https://ai.google.dev/pricing), since this varies by model and changes over time), that's roughly:
+For Gemini specifically, `CORRECTION_RPM` (default 5) throttles calls to stay under its per-minute quota, and `GEMINI_MAX_HONORED_RETRY_DELAY_SECONDS` (default 60s) bounds how long a single 429 wait can be — see "Gemini rate limiting" in ARCHITECTURE.md §9.5.
+
+**Measured token usage (n=2 pages)**: the only two successful Gemini calls obtained so far — 871+1,538 = 2,409 input tokens and 474+1,089 = 1,563 output tokens, averaging **~1,205 input / ~782 output tokens per page**. Two later reprocessing rounds intended to grow this sample instead hit the free-tier rate limit on every attempt — first the per-minute limit, then (after fixing that) the **daily** limit (20 requests/day for `gemini-3.8-flash`) — and produced zero additional successful calls. So this estimate is still from a 2-page sample, not a larger one; growing it needs a paid-tier key, a different provider, or waiting for the daily quota to reset. At Gemini Flash-tier list pricing (~$0.10/M input, ~$0.40/M output — confirm the current rate at [ai.google.dev/pricing](https://ai.google.dev/pricing), since this varies by model and changes over time), that's roughly:
 
 ```
 (1205 / 1,000,000 × $0.10) + (782 / 1,000,000 × $0.40) ≈ $0.00043 / page

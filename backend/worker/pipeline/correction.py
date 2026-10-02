@@ -39,6 +39,7 @@ import hashlib
 import json
 import logging
 import re
+import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -211,7 +212,65 @@ class OpenAICorrectionProvider(CorrectionProvider):
 
 # ---------------------------------------------------------------------------
 # Gemini provider (alternative; same CorrectionProvider contract)
+#
+# Gemini's free tier caps gemini-3.8-flash at a handful of requests/minute
+# (observed: generate_content_free_tier_requests quota, limit 5/min) — far
+# tighter than Anthropic/OpenAI have shown. Two complementary mechanisms
+# keep correction usable under that ceiling instead of burning the whole
+# retry budget on 429s:
+#   1. A proactive, process-wide rate limiter (_wait_for_rate_limit) spaces
+#      every Gemini call at least 60/CORRECTION_RPM seconds apart, shared
+#      across all jobs/pages in this worker process — not per call site.
+#   2. On an actual 429, the server's own exact RetryInfo.retryDelay is
+#      parsed from the error payload and waited out precisely, and that
+#      wait does NOT count against GEMINI_RETRY_ATTEMPTS (which is reserved
+#      for genuine 5xx/network failures) — a capped number of such waits
+#      (_MAX_RATE_LIMIT_WAITS) still applies so a persistently exhausted
+#      quota falls back to raw text instead of blocking the job forever.
+# The SDK's own built-in retry is disabled (attempts=1) so this manual loop
+# has sole control over when and how long to wait.
 # ---------------------------------------------------------------------------
+
+_rate_limit_lock = threading.Lock()
+_last_correction_call_time: Optional[float] = None
+
+# Safety cap on consecutive 429-triggered waits per call — if the quota is
+# still exhausted after this many server-specified waits, give up and fall
+# back to raw text rather than block the job indefinitely.
+_MAX_RATE_LIMIT_WAITS = 3
+
+
+def _wait_for_rate_limit() -> None:
+    """Blocks until at least 60/CORRECTION_RPM seconds have passed since the
+    last correction API call — module-level state, shared across every
+    job/page processed by this worker, not scoped to one call site."""
+    global _last_correction_call_time
+    with _rate_limit_lock:
+        min_interval = 60.0 / max(settings.CORRECTION_RPM, 1)
+        now = time.monotonic()
+        if _last_correction_call_time is not None:
+            remaining = min_interval - (now - _last_correction_call_time)
+            if remaining > 0:
+                time.sleep(remaining)
+        _last_correction_call_time = time.monotonic()
+
+
+def _parse_retry_delay_seconds(error_details: Any) -> Optional[float]:
+    """Extracts the server-specified wait (google.rpc.RetryInfo.retryDelay,
+    e.g. "40s") from a Gemini error payload, if present. Returns None if the
+    payload doesn't carry a structured RetryInfo (caller falls back to the
+    configured max backoff)."""
+    try:
+        error_obj = error_details.get("error", error_details) if isinstance(error_details, dict) else {}
+        for detail in error_obj.get("details") or []:
+            if isinstance(detail, dict) and str(detail.get("@type", "")).endswith("RetryInfo"):
+                delay_str = str(detail.get("retryDelay", ""))
+                if delay_str.endswith("s"):
+                    return float(delay_str[:-1])
+    except Exception:
+        logger.debug("Could not parse retryDelay from Gemini error payload", exc_info=True)
+    return None
+
 
 class GeminiCorrectionProvider(CorrectionProvider):
     def __init__(self) -> None:
@@ -231,10 +290,7 @@ class GeminiCorrectionProvider(CorrectionProvider):
                 api_key=settings.CORRECTION_API_KEY,
                 http_options=types.HttpOptions(
                     timeout=int(settings.CORRECTION_TIMEOUT_SECONDS * 1000),  # ms
-                    retry_options=types.HttpRetryOptions(
-                        attempts=settings.CORRECTION_MAX_RETRIES + 1,
-                        http_status_codes=[429, 500, 502, 503, 504],
-                    ),
+                    retry_options=types.HttpRetryOptions(attempts=1),  # manual retry loop below
                 ),
             )
         return self._client
@@ -245,20 +301,65 @@ class GeminiCorrectionProvider(CorrectionProvider):
 
         client = self._get_client()
         payload = [{"block_id": i.block_id, "language": i.language, "text": i.text} for i in items]
+        config = types.GenerateContentConfig(
+            system_instruction=_SYSTEM_PROMPT,
+            response_mime_type="application/json",
+        )
 
-        try:
-            response = client.models.generate_content(
-                model=settings.CORRECTION_MODEL,
-                contents=json.dumps(payload, ensure_ascii=False),
-                config=types.GenerateContentConfig(
-                    system_instruction=_SYSTEM_PROMPT,
-                    response_mime_type="application/json",
-                ),
-            )
-        except genai_errors.APIError as exc:
-            raise CorrectionError(f"Gemini API error: {exc}") from exc
-        except Exception as exc:  # network errors, timeouts not subclassing APIError
-            raise CorrectionError(f"Gemini request failed: {exc}") from exc
+        server_error_attempts = 0  # 5xx/network retries only
+        rate_limit_waits = 0       # 429 waits — tracked separately, don't count above
+
+        while True:
+            _wait_for_rate_limit()
+            try:
+                response = client.models.generate_content(
+                    model=settings.CORRECTION_MODEL,
+                    contents=json.dumps(payload, ensure_ascii=False),
+                    config=config,
+                )
+                break
+            except genai_errors.ClientError as exc:
+                if exc.code == 429 and rate_limit_waits < _MAX_RATE_LIMIT_WAITS:
+                    delay = _parse_retry_delay_seconds(exc.details) or settings.GEMINI_RETRY_MAX_DELAY_SECONDS
+                    if delay > settings.GEMINI_MAX_HONORED_RETRY_DELAY_SECONDS:
+                        # A delay this long (observed: ~13.5h) means a daily
+                        # quota is exhausted, not the per-minute one — no
+                        # amount of waiting inside this task recovers that.
+                        # Give up on correction for this page now rather
+                        # than sleep through it and hang the whole worker
+                        # (concurrency=1) for hours.
+                        logger.warning(
+                            "Gemini rate-limited (429) with a %.0fs retryDelay — exceeds the %.0fs "
+                            "honored cap (likely a daily, not per-minute, quota); falling back to "
+                            "raw text instead of waiting",
+                            delay, settings.GEMINI_MAX_HONORED_RETRY_DELAY_SECONDS,
+                        )
+                        raise CorrectionError(f"Gemini API error: {exc}") from exc
+                    rate_limit_waits += 1
+                    logger.warning(
+                        "Gemini rate-limited (429) — waiting the server-specified %.1fs before "
+                        "retrying (wait %d/%d, not counted against the %d-attempt retry budget)",
+                        delay, rate_limit_waits, _MAX_RATE_LIMIT_WAITS, settings.GEMINI_RETRY_ATTEMPTS,
+                    )
+                    time.sleep(delay)
+                    continue
+                raise CorrectionError(f"Gemini API error: {exc}") from exc
+            except genai_errors.ServerError as exc:
+                server_error_attempts += 1
+                if server_error_attempts >= settings.GEMINI_RETRY_ATTEMPTS:
+                    raise CorrectionError(f"Gemini API error: {exc}") from exc
+                delay = min(
+                    settings.GEMINI_RETRY_INITIAL_DELAY_SECONDS * (2 ** (server_error_attempts - 1)),
+                    settings.GEMINI_RETRY_MAX_DELAY_SECONDS,
+                )
+                logger.info(
+                    "Gemini server error (attempt %d/%d) — retrying in %.1fs: %s",
+                    server_error_attempts, settings.GEMINI_RETRY_ATTEMPTS, delay, exc,
+                )
+                time.sleep(delay)
+                continue
+            except Exception as exc:  # network errors, timeouts not subclassing APIError
+                raise CorrectionError(f"Gemini request failed: {exc}") from exc
 
         if response.usage_metadata is not None:
             logger.info(
