@@ -213,20 +213,27 @@ class OpenAICorrectionProvider(CorrectionProvider):
 # ---------------------------------------------------------------------------
 # Gemini provider (alternative; same CorrectionProvider contract)
 #
-# Gemini's free tier caps gemini-3.8-flash at a handful of requests/minute
-# (observed: generate_content_free_tier_requests quota, limit 5/min) — far
-# tighter than Anthropic/OpenAI have shown. Two complementary mechanisms
-# keep correction usable under that ceiling instead of burning the whole
-# retry budget on 429s:
+# Gemini's free tier caps gemini-3.8-flash on both a per-minute AND a
+# per-day quota (observed: generate_content_free_tier_requests at 5/min,
+# and separately GenerateRequestsPerDayPerProjectPerModel-FreeTier at
+# 20/day) — far tighter than Anthropic/OpenAI have shown. Three
+# complementary mechanisms keep correction usable/safe under those limits:
 #   1. A proactive, process-wide rate limiter (_wait_for_rate_limit) spaces
 #      every Gemini call at least 60/CORRECTION_RPM seconds apart, shared
 #      across all jobs/pages in this worker process — not per call site.
-#   2. On an actual 429, the server's own exact RetryInfo.retryDelay is
-#      parsed from the error payload and waited out precisely, and that
-#      wait does NOT count against GEMINI_RETRY_ATTEMPTS (which is reserved
-#      for genuine 5xx/network failures) — a capped number of such waits
-#      (_MAX_RATE_LIMIT_WAITS) still applies so a persistently exhausted
-#      quota falls back to raw text instead of blocking the job forever.
+#      This is what the per-minute quota needs.
+#   2. On a per-minute 429, the server's own exact RetryInfo.retryDelay is
+#      parsed from the error payload and waited out precisely (not counted
+#      against GEMINI_RETRY_ATTEMPTS, reserved for genuine 5xx/network
+#      failures) — capped at GEMINI_MAX_HONORED_RETRY_DELAY_SECONDS and a
+#      max number of waits (_MAX_RATE_LIMIT_WAITS) as a safety net.
+#   3. A per-day 429 is detected directly from its QuotaFailure.quotaId
+#      (_is_daily_quota_error) rather than inferred from delay length, and
+#      trips a circuit breaker (_trip_daily_quota_circuit_breaker): no
+#      retry, no wait at all — a daily cap doesn't recover in seconds, so
+#      waiting is pure cost. Correction is skipped outright (raw text,
+#      immediate) for the rest of the job and for
+#      GEMINI_DAILY_QUOTA_COOLDOWN_MINUTES afterward, process-wide.
 # The SDK's own built-in retry is disabled (attempts=1) so this manual loop
 # has sole control over when and how long to wait.
 # ---------------------------------------------------------------------------
@@ -272,6 +279,54 @@ def _parse_retry_delay_seconds(error_details: Any) -> Optional[float]:
     return None
 
 
+def _is_daily_quota_error(error_details: Any) -> bool:
+    """True if a 429's QuotaFailure names a daily (not per-minute) quota —
+    the quotaId contains "PerDay" (observed:
+    GenerateRequestsPerDayPerProjectPerModel-FreeTier). Checked directly
+    against the quota identifier rather than inferred from delay length, so
+    it's exact rather than a heuristic."""
+    try:
+        error_obj = error_details.get("error", error_details) if isinstance(error_details, dict) else {}
+        for detail in error_obj.get("details") or []:
+            if isinstance(detail, dict) and str(detail.get("@type", "")).endswith("QuotaFailure"):
+                for violation in detail.get("violations") or []:
+                    if "PerDay" in str(violation.get("quotaId", "")):
+                        return True
+    except Exception:
+        logger.debug("Could not inspect QuotaFailure for daily-quota check", exc_info=True)
+    return False
+
+
+_daily_quota_lock = threading.Lock()
+_daily_quota_cooldown_until: Optional[float] = None
+
+
+def _daily_quota_cooldown_remaining() -> float:
+    """Seconds left in an active daily-quota cooldown, or 0.0 if none is
+    active — module-level state, shared across every job/page."""
+    with _daily_quota_lock:
+        if _daily_quota_cooldown_until is None:
+            return 0.0
+        return max(0.0, _daily_quota_cooldown_until - time.monotonic())
+
+
+def _trip_daily_quota_circuit_breaker() -> None:
+    """Called once a daily quota is confirmed exhausted. Skips correction
+    entirely — no retry, no wait — for the rest of the current job and for
+    GEMINI_DAILY_QUOTA_COOLDOWN_MINUTES afterward, process-wide. A daily cap
+    doesn't recover within a job's lifetime, so there is nothing to gain
+    from retrying; logs once here rather than on every subsequent skip."""
+    global _daily_quota_cooldown_until
+    with _daily_quota_lock:
+        _daily_quota_cooldown_until = time.monotonic() + settings.GEMINI_DAILY_QUOTA_COOLDOWN_MINUTES * 60
+    logger.warning(
+        "Gemini daily quota exhausted — correction will be skipped (no retry, no wait) for the "
+        "rest of this job and for the next %d minute(s) across all jobs; raw OCR text will be "
+        "used instead",
+        settings.GEMINI_DAILY_QUOTA_COOLDOWN_MINUTES,
+    )
+
+
 class GeminiCorrectionProvider(CorrectionProvider):
     def __init__(self) -> None:
         self._client = None
@@ -299,6 +354,13 @@ class GeminiCorrectionProvider(CorrectionProvider):
         from google.genai import types
         from google.genai import errors as genai_errors
 
+        cooldown_remaining = _daily_quota_cooldown_remaining()
+        if cooldown_remaining > 0:
+            raise CorrectionError(
+                f"Gemini daily quota cooldown active ({cooldown_remaining:.0f}s remaining) — "
+                "skipping without retry"
+            )
+
         client = self._get_client()
         payload = [{"block_id": i.block_id, "language": i.language, "text": i.text} for i in items]
         config = types.GenerateContentConfig(
@@ -319,6 +381,9 @@ class GeminiCorrectionProvider(CorrectionProvider):
                 )
                 break
             except genai_errors.ClientError as exc:
+                if exc.code == 429 and _is_daily_quota_error(exc.details):
+                    _trip_daily_quota_circuit_breaker()
+                    raise CorrectionError(f"Gemini API error (daily quota): {exc}") from exc
                 if exc.code == 429 and rate_limit_waits < _MAX_RATE_LIMIT_WAITS:
                     delay = _parse_retry_delay_seconds(exc.details) or settings.GEMINI_RETRY_MAX_DELAY_SECONDS
                     if delay > settings.GEMINI_MAX_HONORED_RETRY_DELAY_SECONDS:

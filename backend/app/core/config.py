@@ -82,6 +82,11 @@ class Settings(BaseSettings):
     # wait's duration). A delay beyond this cap is treated as "not
     # recoverable within this job" and falls back to raw text instead.
     GEMINI_MAX_HONORED_RETRY_DELAY_SECONDS: float = 60.0
+    # Circuit breaker: once a 429's QuotaFailure names a daily (not
+    # per-minute) quota, correction is skipped outright — no retry, no wait
+    # — for the rest of the current job and for this many minutes afterward,
+    # shared across all jobs/pages (a daily cap doesn't recover in seconds).
+    GEMINI_DAILY_QUOTA_COOLDOWN_MINUTES: int = 30
 
     # OCR quality score (Phase 2 item 5) — weights must sum to 1.0.
     QUALITY_WEIGHT_CONFIDENCE: float = 0.35
